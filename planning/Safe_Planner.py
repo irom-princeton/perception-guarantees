@@ -106,7 +106,7 @@ class Safe_Planner:
     def __init__(self,
                  world_box: np.ndarray = np.array([[0,0],[8,8]]), # world dimensions ([x_min, y_min], [x_max, y_max])
                  vx_range: list = [-0.5,0.5], # velocity ranges
-                 vy_range: list = [0,1],
+                 vy_range: list = [0,4],
                  sr: float = 1.0, # initial clearance
                  init_state: list = [4,1,0,0.5], # initial state [x,y,vx,vy]
                  goal_f: list = [7,-2,0.5,0], # goal location with forrestal coordinates
@@ -181,7 +181,7 @@ class Safe_Planner:
         for i in np.linspace(0.5,self.world.w-0.5,num_horizontal):
             for j in np.linspace(0.5,self.world.h-0.5,num_vertical):
                 for k in np.linspace(min(self.vx_range),max(self.vx_range),num_speed):
-                    self.Pset.append([i,j,k,0.5]) # constant forward speed
+                    self.Pset.append([i,j,k,1.5]) # constant forward speed
         self.n_samples = len(self.Pset)
         self.Pset.append(self.goal)
 
@@ -189,6 +189,7 @@ class Safe_Planner:
         @ray.remote # speed up
         def compute_reachable(node_idx):
             node = self.Pset[node_idx]
+            print(node_idx)
             fset, fdist, ftime, ftraj = filter_reachable(node,self.Pset,self.r,self.vx_range,self.vy_range, 'F', self.dt)
             bset, bdist, btime, btraj = filter_reachable(node,self.Pset,self.r,self.vx_range,self.vy_range, 'B', self.dt)
             return (node_idx,(fset, fdist, ftime, ftraj), (bset, bdist, btime, btraj))
@@ -516,3 +517,28 @@ class Safe_Planner:
         self.time[idx_near] = time_new
         self.parent[idx_near] = idx_parent
         self.time_to_come[idx_near] = self.time_to_come[idx_parent] + time_new
+
+
+    def plot_reachable(self, direction):
+        '''Plot reachability connections'''
+        _, ax = plt.subplots()
+        ax.set_xlim([0,self.world.w])
+        ax.set_ylim([0,self.world.h])
+        for i in range(self.n_samples):
+            ax.scatter(self.Pset[i][0],self.Pset[i][1],color = 'k',marker = '.')
+            if direction == 'F':
+                fset = self.reachable[i][1]
+                for j in range(len(fset[0])):
+                    # show_trajectory(ax, self.Pset[i],
+                    #                 self.Pset[fset[0][j]],fset[1][j],self.dt)
+                    traj = self.reachable[i][1][3][j][0]
+                    ax.plot(traj[:,0], traj[:,1], c='gray', linewidth=0.5)
+
+            elif direction == 'B':
+                bset = self.reachable[i][2]
+                for j in range(len(bset[0])):
+                    # show_trajectory(ax, self.Pset[bset[0][j]],
+                    #                 self.Pset[i],bset[1][j],self.dt)
+                    traj = self.reachable[i][2][3][j][0]
+                    ax.plot(traj[:,0], traj[:,1], c='gray', linewidth=0.5)
+        plt.show()

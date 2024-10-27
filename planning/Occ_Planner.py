@@ -35,20 +35,24 @@ class World():
         self.sensor_range = sensor_range
         self.path_resolution = path_resolution
         self.rr = rr
+        self.counter = 0
     
-    def update(self, new_map: np.ndarray) -> 'World':
+    def update(self, new_grid: np.ndarray) -> 'World':
         """
         Update world with new map
 
         Args:
-            new_map (np.ndarray): New map
+            new_grid (np.ndarray): New grid observation
 
         Returns:
             World: Updated world
         """
         
-        # take intersection of occupied cells
-        self.map_design = np.logical_and(self.map_design, new_map)
+        # take intersection of occupied cells while keeping free cells
+        free_cells = np.where(self.map_design == 0.5)
+        new_map = np.logical_and(self.map_design==1, new_grid==1).astype(float)
+        new_map[free_cells] = 0.5
+        self.map_design = new_map
 
         return self
 
@@ -79,7 +83,7 @@ class World():
         def compute_occlusion(grid, observer_pos, sensor_range):
             visible_cells = set()
             x0, y0 = observer_pos
-            for angle in np.arange(-self.fov,self.fov):  # Cast rays inside fov
+            for angle in np.arange(-self.fov/2,self.fov/2):  # Cast rays inside fov
                 x1 = x0 - int(sensor_range * np.cos(angle*np.pi/180))
                 y1 = y0 + int(sensor_range * np.sin(angle*np.pi/180))
                 ray_cells = bresenham_line(x0, y0, x1, y1)
@@ -91,15 +95,20 @@ class World():
                         break  # Stop if obstacle is found, everything behind it is occluded
                     visible_cells.add((x, y))  # Otherwise, mark as visible
 
+            # # add a circle around the observer
+            # for i in range(-3,4):
+            #     for j in range(-3,4):
+            #         if np.sqrt(i**2+j**2)<=3:
+            #             visible_cells.add((x0+i,y0+j))
+
             return visible_cells
         
         visible_cells = compute_occlusion(self.map_design, state, self.sensor_range)
-        pred_occ = self.map_design.copy()
+        pred_occ = self.map_design.copy().astype(float)
         for (x,y) in visible_cells:
             pred_occ[x][y] = 0.5
         
-        pred_occ = median_filter(pred_occ, size=2) # apply filter to cover random holes
-
+        # pred_occ = median_filter(pred_occ, size=2) # apply filter to cover random holes
         self.map_design = pred_occ
         # construct obstacle tree
         obstacles = np.argwhere(pred_occ != 0.5)
@@ -249,8 +258,8 @@ class Safe_Planner():
         # construct obstacle tree
         # obstacles = np.argwhere(map_design == 1)
         # self.obstacles_tree = cKDTree(obstacles)
-        self.world = World(np.zeros((83,83)))
-        self.world = self.world.occlusion(self.world.state_to_pixel(init_state[0:2]))
+        self.world = World(np.ones((83,83)))
+        # self.world = self.world.occlusion(self.world.state_to_pixel(init_state[0:2]))
 
 
         # initialize graph
@@ -288,8 +297,6 @@ class Safe_Planner():
             state = self.world.pixel_to_state(np.array(boundary[i]))
             candidates.append(state)
         
-        
-
         costs = []
         subgoal_ids = []
 
@@ -305,6 +312,8 @@ class Safe_Planner():
         for subgoal_idx in subgoal_ids:
             if any([(i == subgoal_idx) for i in self.goal_explored]):
                 # this subgoal is already explored
+                costs.append(np.inf)
+            elif subgoal_idx == start_id:
                 costs.append(np.inf)
             else:
                 subgoal = self.Pset[subgoal_idx]
@@ -326,7 +335,7 @@ class Safe_Planner():
                 costs.append(cost_to_come + 10*dist_to_go/v)
 
         if all(np.isinf(costs)):
-            return None
+            return None, None
         else:
             self.goal_id = subgoal_ids[np.argmin(costs)]
             return self.Pset[self.goal_id]
@@ -353,8 +362,7 @@ class Safe_Planner():
         goal = np.asarray(goal)
         # assert self.world.check_collision(start[0:2], None)
         # assert self.check_collision(goal[0:2], None)
-        
-        # TODO: update world
+        # update world
         self.world = self.world.update(map_design)
         self.world = self.world.occlusion(self.world.state_to_pixel(start[0:2]))
         
@@ -370,10 +378,18 @@ class Safe_Planner():
         self.V_open = None
         self.time_to_come = np.zeros(self.n_samples)
         self.graph.remove_edges_from(list(self.graph.edges))
-        
+
         # find nearest valid sampled node to current state and goal state
         start_idx_all = np.argsort(cdist(np.array(self.Pset),np.array([start])), axis=0)
         start_valid_idx = np.where(self.bool_valid[start_idx_all])[0]
+        
+        if len(start_valid_idx) == 0:
+            print("Start node is in collision")
+            return {
+                "idx_solution": [0],
+                "x_waypoints": [start],
+                "u_waypoints": [[0,0]],
+            }
         start_id = start_idx_all[start_valid_idx[0]][0]
         # goal doesn't have to be valid
         goal_id = np.argmin(cdist(np.array(self.Pset),np.array([goal])), axis=0)[0]
@@ -382,24 +398,25 @@ class Safe_Planner():
         # build tree
         z, goal_flag = self.build_tree(start_id, goal_id)
         self.goal_explored = []
-        
-        # TODO: here add intermediate goal
         if goal_flag == 1: # path found
+            print("Path found")
             idx_solution = [x for x in nx.shortest_path(self.graph, start_id, z)]
-        else:
+        else: # no plan, explore intermediate goals
             while goal_flag == 0:
                 goal_loc = self.goal_inter(start_id)
                 
                 if goal_loc is None or self.goal_id == goal_id:
                     goal_flag = -1
                     idx_solution = [self.goal_id]
+                    print("No path found")
                     break
                 else:
-                    print('Intermediate goal:', goal_loc)
-                    self.goal_explored.append(self.goal_id)
                     if self.goal_id not in self.V_unvisited:
                         idx_solution = [x for x in nx.shortest_path(self.graph, start_id, self.goal_id)]
-                        break
+                        goal_flag = 1
+                        print(f"Intermediate path found from {start_id} to {self.goal_id}")
+                        break # why doens't break?
+
         
         # output controls
         x_waypoints = []
@@ -436,7 +453,6 @@ class Safe_Planner():
         # start search
         for n_steps in range(self.max_search_iter):
             if z == goal_id:
-                print("Reached goal")
                 goal_flag = 1
                 break
             R_plus = self.reachable[z][1][0]

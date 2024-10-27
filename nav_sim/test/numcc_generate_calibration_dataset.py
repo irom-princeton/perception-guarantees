@@ -67,8 +67,7 @@ num_steps = len(x)
 # numcc args
 numcc_args = main_numcc.get_args_parser().parse_args(args=[])
 numcc_args.udf_threshold = 0.23 # calibrate?
-# numcc_args.udf_threshold = 0.1
-numcc_args.resume = '/home/zm2074/Projects/perception-guarantees/numcc/pretrained/numcc_hypersim_550c.pth'
+numcc_args.resume = base_path/'numcc/pretrained/numcc_hypersim_550c.pth'
 numcc_args.use_hypersim = True
 numcc_args.run_vis = True
 numcc_args.n_groups = 550
@@ -505,7 +504,7 @@ if __name__ == '__main__':
    
 
     ##################################################################
-    env = 289
+    env = 308
     batch_size = int(args.num_parallel)
     ##################################################################
 

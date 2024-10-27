@@ -7,11 +7,51 @@ from pc_dataset import PointCloudDataset
 from loss_fn import *
 from copy import deepcopy
 from matplotlib import pyplot as plt
+import scipy.special
+import scipy.optimize as opt
+import pickle
+import os
+import functools
 
 import sys
 sys.path.append('../utils')
 
-def main(raw_args=None):
+from pathlib import Path
+base_path = Path(__file__).parent
+data_path = base_path.parent / 'data'
+
+# from Ani
+def diff_conditional_success(epsilon_hat, desired_success_prob, N, delta):
+	v = np.floor((N+1)*epsilon_hat)
+	a = N+1-v
+	b = v
+	return scipy.special.betaincinv(a, b, delta) - desired_success_prob
+
+def main_numcc():
+	folder_path = data_path/'perception-guarantees/task_numcc/data/dataset_intermediate/'
+	losses = []
+
+	file_names = [f for f in os.listdir(folder_path) if f.endswith('.pkl')]
+	for filename in file_names:
+		with open(f'{folder_path}/{filename}', 'rb') as f:
+			data = pickle.load(f)
+			delta = data[0]['delta']
+			losses.append(delta)
+	
+	desired_epsilon = 0.15
+	desired_success_prob = 1-desired_epsilon
+	delta = 0.01
+	N = len(losses)
+	epsilon_hat = opt.bisect(diff_conditional_success, desired_epsilon/10, 0.5, args=(desired_success_prob, N, delta))
+
+	q_level = np.ceil((N+1)*(1-epsilon_hat))/N
+	qhat = np.quantile(losses, q_level, method = 'higher')
+	print(f'qhat: {qhat}')
+	return qhat
+	
+
+
+def main_box(raw_args=None):
 
 
 	###################################################################
@@ -96,5 +136,5 @@ def main(raw_args=None):
 # Run with command line arguments precisely when called directly
 # (rather than when imported)
 if __name__ == '__main__':
-	main() 
+	main_numcc() 
 

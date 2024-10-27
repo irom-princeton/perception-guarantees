@@ -123,15 +123,15 @@ def filter_reachable(state: np.ndarray, state_set: list, r, vx_range, vy_range, 
                         x,u = gen_trajectory(state, state_i, time, dt)
                     elif direction == 'B':
                         x,u = gen_trajectory(state_i, state, time, dt)
-                    if (np.all(min(vx_range)-0.6<=u[:,0]) and np.all(u[:,0]<=max(vx_range)+0.6) 
-                        and np.all(min(vy_range)-0.6<=u[:,1]) and np.all(u[:,1]<=max(vy_range)+0.6)
-                        and np.all(min(vx_range)-0.4<=x[:,2]) and np.all(x[:,2]<=max(vx_range)+0.4)
-                        and np.all(min(vy_range)-0.4<=x[:,3]) and np.all(x[:,3]<=max(vy_range)+0.4)
-                        and np.all(0<=x[:,0]) and np.all(x[:,0]<=8) and np.all(0<=x[:,1]) and np.all(x[:,1]<18)):
-                        state_set_filtered.append(idx)
-                        cost_set_filtered.append(cost)
-                        time_set_filtered.append(time)
-                        traj_set_filtered.append((x,u))
+                    # if (np.all(min(vx_range)-0.6<=u[:,0]) and np.all(u[:,0]<=max(vx_range)+0.6) 
+                    #     and np.all(min(vy_range)-0.6<=u[:,1]) and np.all(u[:,1]<=max(vy_range)+0.6)
+                    #     and np.all(min(vx_range)-0.4<=x[:,2]) and np.all(x[:,2]<=max(vx_range)+0.4)
+                    #     and np.all(min(vy_range)-0.4<=x[:,3]) and np.all(x[:,3]<=max(vy_range)+0.4)
+                    #     and np.all(0<=x[:,0]) and np.all(x[:,0]<=8) and np.all(0<=x[:,1]) and np.all(x[:,1]<18)):
+                    state_set_filtered.append(idx)
+                    cost_set_filtered.append(cost)
+                    time_set_filtered.append(time)
+                    traj_set_filtered.append((x,u))
 
     return state_set_filtered, cost_set_filtered, time_set_filtered, traj_set_filtered
 
