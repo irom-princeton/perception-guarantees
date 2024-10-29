@@ -15,6 +15,7 @@ from numcc.util.misc import NativeScalerWithGradNormCount as NativeScaler
 from nav_sim.env.task_env_numcc import TaskEnv
 
 import plotly.express as px
+from scipy.ndimage import median_filter
 import torch
 import numpy as np
 import pickle
@@ -36,6 +37,21 @@ def load_task(task_dataset, task_idx):
         task_dataset = pickle.load(f)
     task = task_dataset[task_idx]
     task = initialize_task(task)
+
+    # Load the states to calibrate
+    with open(pg_path/'planning/pre_compute/Pset-1.5k.pkl', 'rb') as f:
+        state_samples = pickle.load(f)
+        # Remove goal
+        state_samples = state_samples[:-1][:]
+    # Remove duplicates
+    sample_proj = [[sample[0], sample[1]] for sample in state_samples]
+    s = []
+    s = [x for x in sample_proj if x not in s and not s.append(x)]
+    # Transform from planner frame
+    x = [float(sample[1]) for sample in s]
+    y = [float(sample[0]-4) for sample in s]
+    task.x = x
+    task.y = y
     return task
 
 def initialize_task(task):
@@ -72,7 +88,7 @@ def initialize_task(task):
     
     return task
 
-def run_env(task):
+def run_env(task, model, numcc_args):
     env = TaskEnv(render=False)
     env.reset(task)
 
@@ -83,21 +99,42 @@ def run_env(task):
     # rotate gt by 180 degrees
     gt = np.rot90(gt, 2)
 
-    return env, gt
+    num_steps = len(task.x)
+    thresholds = np.zeros(num_steps)
+    coverages = np.zeros((num_steps, gt.shape[0], gt.shape[1]))
+
+    for step in range(num_steps):
+        if (step+1)%50 == 0:
+            print(f'Step {step+1}/{num_steps}')
+        x = task.x[step]
+        y = task.y[step]
+        task, observation = run_step(env, task, x, y, step)
+
+        samples = process_observation(task, observation, cam_position = task.observation.camera_pos[step])
+        all_pred_udf, query_xyz, seen_xyz = run_viz_udf(model, samples, numcc_args)
+        # fig = visualize(pred_points, seen_xyz, cam_position = task.observation.camera_pos[step])
+        t, coverage = find_threshold(torch.cat(all_pred_udf, dim=0), query_xyz, seen_xyz, gt, task.observation.camera_pos[step])
+        thresholds[step] = t
+        coverages[step] = coverage
+
+        # plot_coverage(torch.cat(all_pred_udf, dim=0), query_xyz, seen_xyz, gt, task.observation.camera_pos[step], t)
+
+    env_results = {'thresholds': thresholds, 'coverages': coverages, 'task': task}
+    return env_results
 
 def run_step(env, task, x, y, step):
-    action  = [x[step],y[step]]
+    action  = [x,y]
     observation, _, _, _ = env.step(action) # observation = (pc, rgb)
     task.observation.camera_pos[step] = [float(env.cam_pos[0]), float(env.cam_pos[1]), float(env.cam_pos[2])]
 
     return task, observation
 
-def process_observation(task, pc):
+def process_observation(task, pc, cam_position):
     # shift to camera center
-    cam_position = torch.tensor(task.observation.camera_pos[0])
+    cam_position = torch.tensor(cam_position)
     xyz = torch.tensor(pc[0])-cam_position
 
-     # change coordinate system
+    # change coordinate system
     forward = xyz[:,:,0]
     left = xyz[:,:,1]
     up = xyz[:,:,2]
@@ -106,21 +143,14 @@ def process_observation(task, pc):
                    np.array([-cam_position[1], -cam_position[2], cam_position[0]]))
 
     xyz = torch.tensor(observation[0]).to(torch.float32)
-    # img = torch.tensor(observation[1]).to(torch.float32) #3,w,h
     img = torch.tensor(observation[1]).permute(1,2,0).to(torch.float32) #w,h,3
     img = img / 255.0
 
     xyz, img = random_crop(xyz, img, is_train=False)
-    # print(xyz.shape)
-    # fig = px.scatter_3d(x=xyz[:,:,0].reshape(112*112), y=xyz[:,:,1].reshape(112*112), z=xyz[:,:,2].reshape(112*112))
-    # fig.update_traces(marker_size=0.5)
-    # fig.show()
 
 
     ######## LOAD DATA ############
     seen_data = [xyz, img]
-
-
 
     gt_data = [torch.zeros(seen_data[0].shape), torch.zeros(seen_data[1].shape)]
     seen_data[1] = seen_data[1].permute(2, 0, 1)
@@ -134,25 +164,7 @@ def process_observation(task, pc):
 
     return samples
 
-def run_viz_udf(samples, args):
-
-    ######## LOAD MODEL ############
-    misc.init_distributed_mode(args)
-
-    model = NUMCC(args=args)
-    model = model.to(args.device)
-    model_without_ddp = model
-
-    # following timm: set wd as 0 for bias and norm layers
-    param_groups = optim_factory.param_groups_weight_decay(model_without_ddp, args.weight_decay)
-    optimizer = torch.optim.AdamW(param_groups, lr=args.blr, betas=(0.9, 0.95))
-    loss_scaler = NativeScaler()
-
-    misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
-
-
-    model.eval()
-
+def run_viz_udf(model, samples, args):
     seen_xyz, valid_seen_xyz, query_xyz, unseen_rgb, labels, seen_images, gt_fps_xyz, seen_xyz_hr, valid_seen_xyz_hr = prepare_data_udf(samples, args.device, is_train=False, is_viz=True, args=args)
 
     seen_images_no_preprocess = seen_images.clone()
@@ -193,7 +205,6 @@ def run_viz_udf(samples, args):
     total_n_passes = int(np.ceil(query_xyz.shape[1] / max_n_queries_fwd))
 
     pred_points = np.empty((0,3))
-    pred_colors = np.empty((0,3))
 
     if args.distributed:
         for param in model.module.parameters():
@@ -202,6 +213,7 @@ def run_viz_udf(samples, args):
         for param in model.parameters():
             param.requires_grad = False
 
+    all_pred_udf = []
 
     for p_idx in range(total_n_passes):
         p_start = p_idx     * max_n_queries_fwd
@@ -223,94 +235,110 @@ def run_viz_udf(samples, args):
                 pred = model.decoderl2(cur_query_xyz, seen_points, valid_seen, fea, up_grid_fea, custom_centers = None)
                 pred = model.fc_out(pred)
 
-        # max_dist = 0.5
         max_dist = args.max_dist
         pred_udf = F.relu(pred[:,:,:1]).reshape((-1, 1)) # nQ, 1
         pred_udf = torch.clamp(pred_udf, max=max_dist) 
+        all_pred_udf.append(pred_udf)
 
-        # Candidate points
-        t = args.udf_threshold
-        pos = (pred_udf < t).squeeze(-1) # (nQ, )
-        points = cur_query_xyz.squeeze(0) # (nQ, 3)
-        points = points[pos].unsqueeze(0) # (1, n, 3)
+        # # Candidate points
+        # t = args.udf_threshold
+        # pos = (pred_udf < t).squeeze(-1) # (nQ, )
+        # points = cur_query_xyz.squeeze(0) # (nQ, 3)
+        # points = points[pos].unsqueeze(0) # (1, n, 3)
 
-        if torch.sum(pos) > 0:
-            points = move_points(model, points, seen_points, valid_seen, fea, up_grid_fea, args, n_iter=args.udf_n_iter)
+        # if torch.sum(pos) > 0:
+        #     pts = points.detach().squeeze(0).cpu().numpy()
+        #     pred_points = np.append(pred_points, pts, axis = 0)
 
-            # predict final color
-            with torch.no_grad():
-                if args.distributed:
-                    pred = model.module.decoderl2(points, seen_points, valid_seen, fea, up_grid_fea)
-                    pred = model.module.fc_out(pred)
-                else:
-                    pred = model.decoderl2(points, seen_points, valid_seen, fea, up_grid_fea)
-                    pred = model.fc_out(pred)
+    return all_pred_udf, query_xyz, seen_xyz
 
-            cur_color_out = pred[:,:,1:].reshape((-1, 3, 256)).max(dim=2)[1] / 255.0
-            cur_color_out = cur_color_out.detach().squeeze(0).cpu().numpy()
-            if len(cur_color_out.shape) == 1:
-                cur_color_out = cur_color_out[None,...]
-            pts = points.detach().squeeze(0).cpu().numpy()
-            pred_points = np.append(pred_points, pts, axis = 0)
-            pred_colors = np.append(pred_colors, cur_color_out, axis = 0)
-        
-    rank = misc.get_rank()
-    out_folder = os.path.join('experiments/', f'{args.exp_name}', 'viz')
-    Path(out_folder).mkdir(parents= True, exist_ok=True)
-    prefix = os.path.join(out_folder, n_exp)
-    img = (seen_images_no_preprocess[0].permute(1, 2, 0) * 255).cpu().numpy().copy().astype(np.uint8)
+def loss_mask(camera_pose, fov=70, grid = np.zeros((83,83))):
+    # camera pose in sim frame
+    mask_grid = np.ones_like(grid)
+    # draw fov from camera_pose
+    # convert to grid frame
+    camera_pose = np.array([8-camera_pose[0], 4-camera_pose[1]])
+    # convert campera pose to index
+    camera_pose = (camera_pose/0.1).astype(int)
 
-    # gt_xyz = samples[1][0].to(device).reshape(-1, 3)
-    # gt_rgb = samples[1][1].to(device).reshape(-1, 3)
-    # mesh_xyz = samples[2].to(device).reshape(-1, 3) if args.use_hypersim else None
-    gt_xyz = None
-    gt_rgb = None
-    mesh_xyz = None
+    for i in range(mask_grid.shape[0]):
+        for j in range(mask_grid.shape[1]):
+            x = camera_pose[0] - i
+            y = np.abs(camera_pose[1] - j)
+            distance = np.sqrt(x**2 + y**2)
+            angle = np.arctan2(y, x)
+            angle = np.rad2deg(angle)
+            angle = (angle + 360) % 360
+            if (angle >  - fov/2) and (angle < + fov/2) and 10<distance<50:
+                mask_grid[i, j] = 0
 
-    fn_pc = None
-    fn_pc_seen = None
-    fn_pc_gt = None
-    if args.save_pc:
-        out_folder_ply = os.path.join('experiments/', f'{args.exp_name}', 'ply')
-        Path(out_folder_ply).mkdir(parents= True, exist_ok=True)
-        prefix_pc = os.path.join(out_folder_ply, n_exp)
-        fn_pc = prefix_pc + '.ply'
+    return mask_grid
 
-        # seen
-        out_folder_ply = os.path.join('experiments/', f'{args.exp_name}', 'ply_seen')
-        Path(out_folder_ply).mkdir(parents= True, exist_ok=True)
-        prefix_pc = os.path.join(out_folder_ply, n_exp)
-        fn_pc_seen = prefix_pc +'_seen' +'.ply'
+def plot_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t):
+    pos = (pred_udf < t).squeeze(-1) # (nQ, )
+    points = cur_query_xyz.squeeze(0) # (nQ, 3)
+    points = points[pos].unsqueeze(0) # (1, n, 3)
 
-        # gt
-        out_folder_ply = os.path.join('experiments/', f'{args.exp_name}', 'ply_gt')
-        Path(out_folder_ply).mkdir(parents= True, exist_ok=True)
-        prefix_pc = os.path.join(out_folder_ply, n_exp)
-        fn_pc_gt = prefix_pc +'_gt' +'.ply'
-
-    with open(prefix + '.html', 'a') as f:
-        generate_html_udf(
-            img,
-            seen_xyz, seen_images_no_preprocess,
-            pred_points,
-            pred_colors,
-            query_xyz,
-            f,
-            gt_xyz=gt_xyz,
-            gt_rgb=gt_rgb,
-            mesh_xyz=mesh_xyz,
-            centers = centers_xyz,
-            fn_pc=fn_pc,
-            fn_pc_seen = fn_pc_seen,
-            fn_pc_gt=fn_pc_gt
-        )
-
-    return pred_points, pred_colors, seen_xyz, prefix
+    pred_points = np.empty((0,3))
+    if torch.sum(pos) > 0:
+        pts = points.detach().squeeze(0).cpu().numpy()
+        pred_points = np.append(pred_points, pts, axis = 0)
+    
+    pred_grid = visualize(pred_points, seen_xyz, cam_position)
+    true_grid = gt+1-loss_mask(cam_position)
+    coverage = pred_grid + true_grid
 
 
-def visualize(pred_points, pred_colors, seen_xyz, prefix, cam_position, ceiling = 0.3, floor = 0.5):
-    pred_points = pred_points + cam_position
-    seen_points = seen_xyz.squeeze(0).cpu().numpy().reshape(-1, 3) + cam_position
+    fig = px.imshow(coverage, title=f'Threshold {np.round(t,2)}')
+    # fig.show()
+    fig.write_image(f'coverage_{np.round(t,2)}.png')
+
+    return 
+
+def find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t):
+    pos = (pred_udf < t).squeeze(-1) # (nQ, )
+    points = cur_query_xyz.squeeze(0) # (nQ, 3)
+    points = points[pos].unsqueeze(0) # (1, n, 3)
+
+    pred_points = np.empty((0,3))
+    if torch.sum(pos) > 0:
+        pts = points.detach().squeeze(0).cpu().numpy()
+        pred_points = np.append(pred_points, pts, axis = 0)
+    
+    pred_grid = visualize(pred_points, seen_xyz, cam_position)
+    true_grid = np.logical_and(gt, 1-loss_mask(cam_position)).astype(int)
+    coverage = pred_grid - true_grid
+
+    # fig = px.imshow(coverage, title=f'Threshold {np.round(t,2)}')
+    # fig.show()
+
+    # fig.write_image(f'coverage_{np.round(t,2)}.png')
+
+    return coverage
+
+def find_threshold(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position):
+    def loss(coverage):
+        coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t)
+        if np.all(coverage >= 0):
+            return 0
+        return 1
+    # find minimum t such that loss(t) = 0
+    t = 0.25 # initial guess
+    coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t)
+
+    while loss(coverage) != 0 and t < 1:
+        t += 0.01
+        coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t)
+
+        # print(t)
+    return t, coverage
+
+
+
+def visualize(pred_points, seen_xyz, cam_position, ceiling = -2, floor = -0.5):
+    cam_position_numcc = np.array([-cam_position[1], -cam_position[2], cam_position[0]])
+    pred_points = pred_points + cam_position_numcc # back to sim frame
+    seen_points = seen_xyz.squeeze(0).cpu().numpy().reshape(-1, 3) + cam_position_numcc
     all_points = np.concatenate([pred_points, seen_points], axis = 0)
 
     # pc_to_occupancy
@@ -332,59 +360,65 @@ def visualize(pred_points, pred_colors, seen_xyz, prefix, cam_position, ceiling 
 
     indices = ((points_2d - np.array([min_x, min_y])) / grid_pitch).astype(int)
     if len(indices) > 0:
-        indices = indices[(indices[:, 0] >= 0) & (indices[:, 0] < 83) & (indices[:, 1] >= 0) & (indices[:, 1] < 83)]
+        indices = indices[(indices[:, 0] >= 0) & (indices[:, 0] < 83) & (indices[:, 1] >= 0) & (indices[:, 1] < 83)]    
     grid[indices[:, 0], indices[:, 1]] = 1  # Mark as occupied
     grid = np.rot90(grid)
+    grid = median_filter(grid, size=2)
 
-    fig = px.imshow(grid)
-    fig.show()
+    # fig = px.imshow(grid)
+    # fig.show()
 
-    return fig
+    return grid
 
-if __name__ == '__main__':
 
-    ## name experiment
-    n_exp = 'test_clean_code'
+def main():
+
+    # numcc args
+    numcc_args = main_numcc.get_args_parser().parse_args(args=[])
+    numcc_args.udf_threshold = 1 #0.23 # calibrate?
+    numcc_args.max_dist = 1 #0.5
+    numcc_args.resume = str(pg_path/'numcc/pretrained/numcc_hypersim_550c.pth')
+    numcc_args.use_hypersim = True
+    numcc_args.run_vis = True
+    numcc_args.n_groups = 550
+    numcc_args.blr = 5e-5
+    numcc_args.save_pc = False
+
+    ######## LOAD MODEL ############
+    misc.init_distributed_mode(numcc_args)
+
+    model = NUMCC(args=numcc_args)
+    model = model.to(numcc_args.device)
+    model_without_ddp = model
+
+    # following timm: set wd as 0 for bias and norm layers
+    param_groups = optim_factory.param_groups_weight_decay(model_without_ddp, numcc_args.weight_decay)
+    optimizer = torch.optim.AdamW(param_groups, lr=numcc_args.blr, betas=(0.9, 0.95))
+    loss_scaler = NativeScaler()
+
+    misc.load_model(args=numcc_args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
+
+    model.eval()
+
+    ######## RUN ENVIRONMENTS ############
 
     ## load task
     task_dataset = pg_path.parent/'data/perception-guarantees/task_0803.pkl'
-    task_idx = 100
 
-    task = load_task(task_dataset, task_idx)
+    for task_idx in range(400):
 
-    ## load env
-    env, gt = run_env(task)
+        task = load_task(task_dataset, task_idx)
 
-    ## run step
-    x = [0.1]
-    y = [0.1]
+        env_results = run_env(task, model, numcc_args)
+    
+        with open(pg_path.parent /'task_numcc'/f'task_0803_{task_idx}.pkl', 'wb') as f:
+            pickle.dump(env_results, f)
+    
 
-    task, pc = run_step(env, task, x, y, 0)
-    cam_position = np.array(task.observation.camera_pos[0])
-
-    ## process observation
-    samples = process_observation(task, pc)
-
-    ## run numcc inference
-    # numcc args
-    use_hypersim = True
-    run_vis = True
-    weights = '/home/zm2074/Projects/perception-guarantees/numcc/pretrained/numcc_hypersim_550c.pth'
-    n_groups = 550
-    blr = 5e-5
-    thres = 0.23
-
-    numcc_args = main_numcc.get_args_parser().parse_args(args=[])
-    numcc_args.udf_threshold = thres #0.23 # calibrate?
-    numcc_args.max_dist = 1 #0.5
-    numcc_args.resume = weights
-    numcc_args.use_hypersim = use_hypersim
-    numcc_args.run_vis = run_vis
-    numcc_args.n_groups = n_groups
-    numcc_args.blr = blr
-    numcc_args.save_pc = False
-
-    pred_points, pred_colors, seen_xyz, prefix = run_viz_udf(samples, numcc_args)
+    return 
 
 
-    ## visualization
+if __name__ == '__main__':
+    main()
+
+    

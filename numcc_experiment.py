@@ -2,6 +2,11 @@ from pathlib import Path
 import pickle
 import gc
 import matplotlib.pyplot as plt
+import time
+import plotly.express as px
+import plotly.graph_objects as go
+from PIL import Image
+from scipy.ndimage import median_filter
 
 from planning.Occ_Planner import Safe_Planner
 from nav_sim.env.task_env_numcc_exp import TaskEnv
@@ -20,18 +25,18 @@ from numcc.util.misc import NativeScalerWithGradNormCount as NativeScaler
 
 
 # base path
-base_path: Path = Path(__file__)
-foldername = base_path+"../data/perception-guarantees/rooms_0803/"
-taskpath = base_path+"../data/perception-guarantees/task_0803.pkl"
+base_path: Path = Path(__file__).parent
+foldername = f'{base_path.parent}/data/perception-guarantees/room_0803/'
+taskpath = f'{base_path.parent}/data/perception-guarantees/task_0803.pkl'
 
 # load pre-sampled points
-Pset = pickle.load(open(base_path/'planning/pre_compute/Pset-1.5k.pkl', 'rb'))
-reachable = pickle.load(open(base_path/'planning/pre_compute/reachable-1.5k.pkl', 'rb'))
+Pset = pickle.load(open(f'{base_path}/planning/pre_compute/Pset-2k.pkl', 'rb'))
+reachable = pickle.load(open(f'{base_path}/planning/pre_compute/reachable-2k.pkl', 'rb'))
 
 # numcc args
 numcc_args = main_numcc.get_args_parser().parse_args(args=[])
-numcc_args.udf_threshold = 0.23
-numcc_args.resume = base_path/'numcc/pretrained/numcc_hypersim_550c.pth'
+numcc_args.udf_threshold = 0.43
+numcc_args.resume = f'{base_path}/numcc/pretrained/numcc_hypersim_550c.pth'
 numcc_args.use_hypersim = True
 numcc_args.run_vis = True
 numcc_args.n_groups = 550
@@ -55,35 +60,31 @@ misc.load_model(args=numcc_args, model_without_ddp=model_without_ddp, optimizer=
 
 model.eval()
 
-cp = 5 #TODO: update
+cp = 0
 
 def state_to_planner(state, sp):
     # convert robot state to planner coordinates
-    return np.array([[[0,-1,0,0],[1,0,0,0],[0,0,0,-1],[0,0,1,0]]])@np.array(state) + np.array([sp.world.w/2,0,0,0])
+    return (np.array([[[0,-1,0,0],[1,0,0,0],[0,0,0,-1],[0,0,1,0]]])@np.array(state) + np.array([8/2,0,0,0])).squeeze()
 
 def state_to_go1(state, sp):
     x, y, vx, vy = state[0]
-    return np.array([y, -x+sp.world.w/2, vy, -vx])
+    return np.array([y, -x+8/2, vy, -vx])
 
 def plan_env(task):
+    print("Env: ", str(task.env))
     visualize = False
     filename = foldername + str(task.env) + '/cp' + str(cp)
     gt_data = np.load((foldername + str(task.env) + '/occupancy_grid.npz'), allow_pickle=True)
     gt_grid = gt_data['arr_0']
-    
-    planner_goal = state_to_planner(np.array([task.goal_loc[0], task.goal_loc[1],0.5,0]), sp)
 
-    env = TaskEnv(render=visualize)
+    env = TaskEnv(render=False)
 
     planner_init_state = [5,0.2,0,0]
     sp = Safe_Planner(init_state=planner_init_state, 
-                      FoV=70*np.pi/180, 
                       n_samples=len(Pset)-1,
-                      dt=0.1,
-                      radius = 0.1, 
-                      sensor_dt=0.2, 
-                      max_search_iter=2000)
-    sp.load_reachable(Pset, reachable)
+                      Pset=Pset,
+                      reachable=reachable,)
+    planner_goal = state_to_planner(np.array([task.goal_loc[0], task.goal_loc[1],0.5,0]), sp)
     
     env.dt = sp.dt
     env.reset(task)
@@ -103,13 +104,34 @@ def plan_env(task):
 
     while True and not done and not collided:
         state = state_to_planner(env._state, sp)
+        print('state: ', env._state)
+
+        # DETECTION
         grid = get_map(observation, cam_position)
         grid_pad = expand_pc(grid, cp)
 
+        misdetected += count_misdetected(gt_grid, grid, grid_pad)
+        time_misdetected += 1
+
+        # PLANNING
         res = sp.plan(state, planner_goal, grid_pad)
         steps_taken+=1
-        if len(res[0]) > 1 and not done and not collided:
-            policy_before_trans = np.vstack(res[2])
+
+
+        if visualize:
+            # plot grid and state with plotly
+            fig = go.Figure()
+            fig.add_trace(go.Heatmap(z=sp.world.map_design, colorscale='gray'))
+            fig.add_trace(go.Scatter(x=[sp.world.state_to_pixel(state)[1]], y=[sp.world.state_to_pixel(state)[0]], mode='markers', marker=dict(size=10, color='red')))
+            fig.show()
+        
+        plt.clf()
+        fig = plt.imshow(sp.world.map_design, cmap='gray')
+        plt.scatter(sp.world.state_to_pixel(state)[1], sp.world.state_to_pixel(state)[0], color='red')
+        plt.savefig(f'{steps_taken}_map.png')
+
+        if len(res['idx_solution']) > 1 and not done and not collided:
+            policy_before_trans = np.vstack(res['u_waypoints'])
             policy = (np.array([[0,1],[-1,0]])@policy_before_trans.T).T
             prev_policy = np.copy(policy)
             for step in range(min(int(sp.sensor_dt/sp.dt), len(policy))):
@@ -146,14 +168,29 @@ def plan_env(task):
                 observation, reward, done, info = env.step(action)
                 # time.sleep(sp.dt)
                 t += sp.dt
-        if t > 140 or plan_fail > 10:
+        if t > 20:
             print("Env: ", str(task.env), " Failed")
             break
-        plot_results(filename, state_traj , gt_grid, sp)
-        return {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
+    # plot_results(filename, state_traj , gt_grid, sp)
+    create_gif([f'{step+1}_map.png' for step in range(steps_taken-1)], 'output.gif')
+    return {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
+
+def create_gif(image_paths, output_gif_path, duration=500):
+    """Creates a GIF from a list of image paths."""
+
+    images = [Image.open(image_path) for image_path in image_paths]
+    images[0].save(
+        output_gif_path,
+        save_all=True,
+        append_images=images[1:],
+        optimize=False,
+        duration=duration,
+        loop=0  # 0 means infinite loop
+    )
+
 
 def plot_results(filename, state_traj , ground_truth, sp):
-    fig, ax = plt.imshow(ground_truth, cmap='gray')
+    fig = plt.imshow(ground_truth, cmap='gray')
     if len(state_traj) >0:
         state_tf = np.squeeze(np.array(state_traj)).T
         if state_tf.shape == (4,):
@@ -164,9 +201,9 @@ def plot_results(filename, state_traj , ground_truth, sp):
             pix_path[row] = pix
         plt.plot(pix_path[:, 1], pix_path[:, 0], 'r-', lw=2)
     plt.legend()
-    plt.savefig(filename + 'traj_plot_1.5k.png')
+    plt.savefig(filename + 'traj_plot_2k.png')
 
-def initialize_task(task, env):
+def initialize_task(task):
     task.goal_radius = 1.0
     task.init_state = [0.2,-1,0,0]
     task.goal_loc = [7, -2]
@@ -192,7 +229,8 @@ def initialize_task(task, env):
     task.observation.lidar.vertical_res = 1  # resolution, in degree , 1
     task.observation.lidar.vertical_fov = 30  # half in one direction, in degree
     task.observation.lidar.max_range = 5 # in meter Anushri changed from 5 to 8
-    task.env= env
+    task.env= task.base_path.split('/')[-1]
+    return task
 
 
 def get_map(pc, cam_position):
@@ -241,7 +279,7 @@ def get_map(pc, cam_position):
 
     if good_points.sum() != 0:
         # filter out ceiling and floor
-        mask = (pc_for_occ[:, 1] > -3 ) & (pc_for_occ[:, 1] < -0.2)
+        mask = (pc_for_occ[:, 1] > -2 ) & (pc_for_occ[:, 1] < -0.5)
         pc_for_occ = pc_for_occ[mask]
     # get rid of the middle dimension
     points_2d = pc_for_occ[:, [0, 2]] # right, forward
@@ -257,6 +295,7 @@ def get_map(pc, cam_position):
         indices = indices[(indices[:, 0] >= 0) & (indices[:, 0] < 83) & (indices[:, 1] >= 0) & (indices[:, 1] < 83)]
     grid[indices[:, 0], indices[:, 1]] = 1  # Mark as occupied
     grid = np.rot90(grid)
+    grid = median_filter(grid, size=2)
 
     return grid
 
@@ -362,7 +401,7 @@ def run_viz_udf(model, samples, device, args):
         # print(pos)
 
         if torch.sum(pos) > 0:
-            points = move_points(model, points, seen_points, valid_seen, fea, up_grid_fea, args, n_iter=args.udf_n_iter)
+            # points = move_points(model, points, seen_points, valid_seen, fea, up_grid_fea, args, n_iter=args.udf_n_iter)
 
             # predict final color
             with torch.no_grad():
@@ -405,6 +444,14 @@ def expand_pc(grid: np.ndarray,
                 grid_pad[left:right, top:bottom] = 1
     return grid_pad
 
+def count_misdetected(gt, pred, mask):
+    should_obstacle = np.logical_and(gt, mask)
+    should_not_obstacle = np.logical_and(np.logical_not(gt), mask)
+    false_positive = np.logical_and(pred, should_not_obstacle)
+    false_negative = np.logical_and(np.logical_not(pred), should_obstacle)
+    total_false = np.sum(false_positive) + np.sum(false_negative)
+    return int(total_false>0)
+
 
 if __name__ == "__main__":
     with open(taskpath, 'rb') as f:
@@ -414,14 +461,14 @@ if __name__ == "__main__":
     nav_sim_path = base_path/"nav_sim"
 
     num_tasks = len(task_dataset)
-    num_envs = 100
+    num_envs = 10
 
     collisions = 0
     fails = 0
     for i in range(num_tasks-num_envs, num_tasks):
         task = task_dataset[i]
-        task = initialize_task(task, i)
+        task = initialize_task(task)
         result = plan_env(task)
 
-        file_batch = foldername+ str(i) + "/cp_" + str(cp) + "_numcc_1.5k.npz"
+        file_batch = foldername+ str(task.env) + "/cp_" + str(cp) + "_numcc_2k.npz"
         np.savez_compressed(file_batch, data=result)
