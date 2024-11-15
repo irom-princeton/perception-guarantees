@@ -35,7 +35,7 @@ reachable = pickle.load(open(f'{base_path}/planning/pre_compute/reachable-2k.pkl
 
 # numcc args
 numcc_args = main_numcc.get_args_parser().parse_args(args=[])
-numcc_args.udf_threshold = 0.43
+numcc_args.udf_threshold = 0.5
 numcc_args.resume = f'{base_path}/numcc/pretrained/numcc_hypersim_550c.pth'
 numcc_args.use_hypersim = True
 numcc_args.run_vis = True
@@ -126,7 +126,7 @@ def plan_env(task):
             fig.show()
         
         plt.clf()
-        fig = plt.imshow(sp.world.map_design, cmap='gray')
+        fig = plt.imshow(sp.world.map_design)
         plt.scatter(sp.world.state_to_pixel(state)[1], sp.world.state_to_pixel(state)[0], color='red')
         plt.savefig(f'{steps_taken}_map.png')
 

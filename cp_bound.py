@@ -12,6 +12,7 @@ import scipy.optimize as opt
 import pickle
 import os
 import functools
+import plotly.graph_objects as go
 
 import sys
 sys.path.append('../utils')
@@ -28,20 +29,38 @@ def diff_conditional_success(epsilon_hat, desired_success_prob, N, delta):
 	return scipy.special.betaincinv(a, b, delta) - desired_success_prob
 
 def main_numcc():
-	folder_path = data_path/'perception-guarantees/task_numcc/data/dataset_intermediate/'
+	folder_path = data_path/'perception-guarantees/task_numcc'
 	losses = []
 
 	file_names = [f for f in os.listdir(folder_path) if f.endswith('.pkl')]
 	for filename in file_names:
 		with open(f'{folder_path}/{filename}', 'rb') as f:
 			data = pickle.load(f)
-			delta = data[0]['delta']
+			# find largest threshold that's not 1
+			i = 1
+			while True:
+				delta = np.sort(data['thresholds'])[-i]
+				worst_step = np.where(data['thresholds'] == delta)[0][0]
+				row = np.where(data['coverages'][worst_step] == -1)[0]
+				if len(row) > 0:
+					if not np.all(row == 0):
+						break
+				else:
+					break
+
+				i += 1
+
 			losses.append(delta)
 	
+	# plot histogram of losses
+	fig = go.Figure(data=[go.Histogram(x=losses)])
+	fig.show()
+
 	desired_epsilon = 0.15
 	desired_success_prob = 1-desired_epsilon
 	delta = 0.01
 	N = len(losses)
+	print('N:', N)
 	epsilon_hat = opt.bisect(diff_conditional_success, desired_epsilon/10, 0.5, args=(desired_success_prob, N, delta))
 
 	q_level = np.ceil((N+1)*(1-epsilon_hat))/N

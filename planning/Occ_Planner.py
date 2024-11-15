@@ -24,7 +24,7 @@ expA = expm(A*10**3)
 class World():
     def __init__(self, 
                  map_design: np.ndarray,
-                 fov: int = 70, #degrees
+                 fov: int = 60, #degrees
                  sensor_range: int = 52, #pixels
                  path_resolution: float = 0.1,
                  rr: float = 1.0,
@@ -37,7 +37,7 @@ class World():
         self.rr = rr
         self.counter = 0
     
-    def update(self, new_grid: np.ndarray) -> 'World':
+    def update(self, new_grid: np.ndarray, state: np.ndarray) -> 'World':
         """
         Update world with new map
 
@@ -48,9 +48,44 @@ class World():
             World: Updated world
         """
         
-        # take intersection of occupied cells while keeping free cells
+        def loss_mask(camera_pose, fov=self.fov, grid = np.zeros((83,83))):
+            # camera pose in sim frame
+            mask_grid = np.ones_like(grid)
+            # draw fov from camera_pose
+            # convert to grid frame
+            camera_pose = np.array([8-camera_pose[0], 4-camera_pose[1]])
+            # convert campera pose to index
+            camera_pose = (camera_pose/0.1).astype(int)
+
+            for i in range(mask_grid.shape[0]):
+                for j in range(mask_grid.shape[1]):
+                    x = camera_pose[0] - i
+                    y = np.abs(camera_pose[1] - j)
+                    distance = np.sqrt(x**2 + y**2)
+                    angle = np.arctan2(y, x)
+                    angle = np.rad2deg(angle)
+                    angle = (angle + 360) % 360
+                    if (angle >  - fov/2) and (angle < + fov/2) and 10<distance<50:
+                        mask_grid[i, j] = 0
+
+            return mask_grid
+        
+        # fov mask
+        mask_grid = 1 - loss_mask(self.state_to_pixel(state))
+
+        # take intersection of occupied cells within fov 
+        intersect_obs = np.logical_and(self.map_design==1, new_grid==1).astype(float)
+        new_map_within_fov = np.logical_and(intersect_obs==1, mask_grid==1)
+
+        # keep new occupied cells outside fov
+        new_map_outside_fov = np.logical_and(new_grid==1, mask_grid==0).astype(float)
+
+        # take union of free cells
         free_cells = np.where(self.map_design == 0.5)
-        new_map = np.logical_and(self.map_design==1, new_grid==1).astype(float)
+        
+        new_map = np.zeros_like(self.map_design)
+        new_map[mask_grid==1] = new_map_within_fov[mask_grid==1]
+        new_map[mask_grid==0] = new_map_outside_fov[mask_grid==0]
         new_map[free_cells] = 0.5
         self.map_design = new_map
 
@@ -363,7 +398,7 @@ class Safe_Planner():
         # assert self.world.check_collision(start[0:2], None)
         # assert self.check_collision(goal[0:2], None)
         # update world
-        self.world = self.world.update(map_design)
+        self.world = self.world.update(map_design, start)
         self.world = self.world.occlusion(self.world.state_to_pixel(start[0:2]))
         
         # initialize
