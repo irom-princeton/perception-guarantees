@@ -21,7 +21,7 @@ class Robot_Plan:
         #self.replan = True # set if want to just follow open loop plan
         #self.save_traj = False  # set if want to save trajectory and compare against plan
         #self.plot_traj = True  # set if want to visualize trajectory at the end of execution
-        goal_forrestal = [7.0, 0.0, 0.0, 1.5] # goal in forrestal coordinates
+        goal_forrestal = [7.0, 0.0, 1.5, 0.0] # goal in forrestal coordinates
         dt = 0.1 #   planner dt
         radius = 0.7 # distance between intermediate goals on the frontier
         chairs = [1, 2, 3, 4,5,6, 7, 8, 9, 10, 11, 12]  # list of chair labels to be used to get ground truth bounding boxes
@@ -140,15 +140,19 @@ class Robot_Plan:
 
     def minor_shifts(self):
         movements = [
-            (-0.2, 0),  # Move left
-            (0.2, 0),   # Move right
-            (0, -0.2)   # Move backward
+            (-0.1, 0),  # Move left
+            (0.1, 0),   # Move right
+            (0, -0.1)   # Move backward
         ]
         
-        # Randomly select a movement
-        dx, dy = random.choice(movements)
-        print(f"Executing minor shift: moving by {dx} meters in x and {dy} meters in y.")
-        self.go1.move((dx, dy))
+        # Checks for free space in surroundings
+        for dx, dy in movements:
+            if self.sp.world.isValid([dx, dy]):
+                print(f"Executing minor shift: moving by {dx} meters in x and {dy} meters in y.")
+                self.go1.move((dx, dy))
+                break
+        else:
+            print("Sampled all surrounding space, no free space found")
 
     def plan(self):
         print("Starting planning...")
