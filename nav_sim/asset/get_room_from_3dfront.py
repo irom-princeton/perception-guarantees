@@ -360,11 +360,11 @@ if __name__ == "__main__":
         help='number of cpu threads to use',
     )
     parser.add_argument(
-        '--save_task_folder', default='/home/allen/data/pac-perception/room/',
+        '--save_task_folder', default='nav_sim/sim_data/rooms/',
         nargs='?', help='path to save the task files'
     )
     parser.add_argument(
-        '--mesh_folder', default='/home/temp/3d-front/3D-FUTURE-model-tiny',
+        '--mesh_folder', default='nav_sim/sim_data/3D-FUTURE-model-tiny',
         nargs='?', help='path to 3D FUTURE dataset'
     )
     # parser.add_argument(

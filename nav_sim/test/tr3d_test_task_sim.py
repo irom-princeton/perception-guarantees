@@ -103,14 +103,14 @@ parser = make_args_parser()
 args = parser.parse_args(args=[])
 
 # Model and weights (Scannet version)
-model = "projects/TR3D/configs/tr3d_1xb16_scannet-3d-18class.py" # TR3D
-weights = "tr3d_1xb16_scannet-3d-18class.pth" # TR3D pretrained weights
+model = "tr3d_1xb16_scannet-3d-18class.py" # TR3D
+weights = "tr3d_scannet.pth" # TR3D pretrained weights
 
 # Initialize inferencer
 inferencer = LidarDet3DInferencer(model=model, weights=weights)
 
 # Load the x,y points to sample
-with open('planning/pre_compute/Pset_10Hz.pkl', 'rb') as f:
+with open('planning/pre_compute/Pset_1.5_7_2K_ramp_unfiltered.pkl', 'rb') as f:
     samples = pickle.load(f)
     # Remove goal
     samples = samples[:-1][:]
@@ -127,6 +127,7 @@ num_steps = len(x)
 # Load params from json file
 with open("env_params.json", "r") as read_file:
     params = json.load(read_file)
+
 
 
 def get_iou(bb1, bb2):
@@ -467,11 +468,11 @@ def combine_old_files(filenames, num_files):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--task_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task.pkl',
-        nargs='?', help='path to save the task files'
+        '--task_dataset', default='nav_sim/sim_data/task.pkl',
+        nargs='?', help='path to task dataset'
     )
     parser.add_argument(
-        '--save_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task.npz',
+        '--save_dataset', default='nav_sim/sim_data/task.npz',
         nargs='?', help='path to save the task files'
     )
     args = parser.parse_args()
