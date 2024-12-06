@@ -468,11 +468,11 @@ def combine_old_files(filenames, num_files):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--task_dataset', default='nav_sim/sim_data/task.pkl',
+        '--task_dataset', default='nav_sim/sim_data/',
         nargs='?', help='path to task dataset'
     )
     parser.add_argument(
-        '--save_dataset', default='nav_sim/sim_data/task.npz',
+        '--save_dataset', default='nav_sim/output/',
         nargs='?', help='path to save the task files'
     )
     args = parser.parse_args()
