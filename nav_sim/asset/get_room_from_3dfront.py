@@ -146,6 +146,7 @@ def process_mesh(category_all, task_id, args):
 
         # Check if dimensions too big
         piece_bounds = piece.bounds
+        breakpoint()
         piece_x_dim = piece_bounds[1, 0] - piece_bounds[0, 0]
         piece_y_dim = piece_bounds[1, 1] - piece_bounds[0, 1]
         piece_z_dim = piece_bounds[1, 2] - piece_bounds[0, 2]
