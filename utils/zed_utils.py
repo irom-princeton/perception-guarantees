@@ -310,10 +310,12 @@ class Zed:
         # model_outputs_all["box_features"][env,batch_inds,:,:] = outputs["box_features"].detach().cpu()
 
         chair_prob = cls_prob[:,:,3]
+        print("*************CHAIR PROBABILITIES: ", chair_prob)
         obj_prob = outputs["outputs"]["objectness_prob"].clone().detach().cpu()
+        print("-------------OBJECT PROBABILITIES: ", obj_prob)
         sort_box = torch.sort(obj_prob,1,descending=True)
 
-        visualize = False
+        visualize = True
         if visualize:
             pc = pc_all.detach().cpu()
             pc_plot = pc[:, pc[0,:,2] > 0.0,:]
