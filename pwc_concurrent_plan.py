@@ -25,7 +25,7 @@ class Robot_Plan:
         dt = 0.1 #   planner dt
         radius = 0.7 # distance between intermediate goals on the frontier
         chairs = [1, 2, 3, 4,5,6, 7, 8, 9, 10, 11, 12]  # list of chair labels to be used to get ground truth bounding boxes
-        self.num_detect = 15  # number of boxes for 3DETR to detect
+        self.num_detect = 8  # number of boxes for 3DETR to detect
         robot_radius = 0.14
         self.cp = 0.73 # 0.73 # 0.61 #0.02
         #self.cp = 0.02
@@ -175,6 +175,9 @@ class Robot_Plan:
         
         # Log the state from which planning will start
         print("State to plan from: ", plan_state)
+
+        # # TODO: remove adjust for camera
+        # plan_state[0][0] + 1
 
         # Step 1: Object detection using the camera
         t_1 = time.time()

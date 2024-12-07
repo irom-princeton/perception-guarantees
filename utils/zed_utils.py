@@ -25,6 +25,9 @@ from models.model_perception import MLPModelDet
 import IPython as ipy
 import open3d as o3d
 
+import datetime
+
+
 np.random.seed(0)
 torch.manual_seed(0)
 class Zed:
@@ -198,8 +201,9 @@ class Zed:
             # convert points to 3detr frame
             print("converting points to 3detr frame")
             points = np.copy(points_)
+            # TODO: made adjustments to point cloud to test camera error
             points[:,1] = points_[:,0]
-            points[:,0] = -points_[:,1]
+            points[:,0] = -points_[:,1] + 1.25
 
             # points_temp = np.copy(points)
             # points[:,2] = points_temp[:,1]
@@ -369,7 +373,8 @@ class Zed:
 
                     
         if visualize:
-            plt.savefig('pointcloud.png')
+            now = datetime.datetime.now()
+            plt.savefig(f'pointcloud_{now.time()}.png')
         # boxes[:,0,:] -= cp
         # boxes[:,1,:] += cp
 
