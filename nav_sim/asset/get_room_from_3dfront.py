@@ -123,8 +123,8 @@ def process_mesh(category_all, task_id, args):
     piece_saved_bounds = []
     piece_id_all = []
     piece_pos_all = []
-    # num_furniture = np.random.randint(args.num_furniture_per_room)+1
-    num_furniture = 5
+    num_furniture = np.random.randint(args.num_furniture_per_room)+1
+    # num_furniture = 5
     num_occlude = int(np.floor(num_furniture/2))
     while num_furniture_saved < num_furniture:
         category_chosen = random.choice(list(category_all.keys()))
@@ -176,16 +176,27 @@ def process_mesh(category_all, task_id, args):
                 -args.room_dim / 2 + piece_y_dim/2,
                 args.room_dim / 2 - piece_y_dim/2,
             )
+            
+            # Sample rotation
+            alpha = random.uniform(0, 2 * np.pi)
+            piece_try = piece.copy()
+            piece_try.apply_transform([
+                [np.cos(alpha), -np.sin(alpha), 0, x_pos],
+                [np.sin(alpha), np.cos(alpha), 0, y_pos],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+            ])
+            piece_bounds = piece_try.bounds  # update after transform before being saved
             overlap = False
 
             # Check gap to other obstacles
             for prev_bounds in piece_saved_bounds:
                 a = (
-                    piece_bounds[0, 0] + x_pos, piece_bounds[0, 1] + y_pos,
-                    piece_bounds[1, 0] + x_pos, piece_bounds[1, 1] + y_pos
+                    piece_bounds[0, 0], piece_bounds[0, 1],
+                    piece_bounds[1, 0], piece_bounds[1, 1]
                 )
                 b = (
-                    prev_bounds[0, 0], prev_bounds[0, 1], \
+                    prev_bounds[0, 0], prev_bounds[0, 1], 
                     prev_bounds[1, 0], prev_bounds[1, 1]
                 )
                 offset = rect_distance(a, b)
@@ -196,7 +207,15 @@ def process_mesh(category_all, task_id, args):
                     overlap=True
                     break
 
-            # Check gap to walls
+            # check gap to origin
+            if is_in_restricted_region(piece_bounds, center=(0.6,-1)):
+                overlap = True
+
+            # check gap to goal
+            if is_in_restricted_region(piece_bounds, center=(7.1,-2), radius=0.5):
+                overlap = True
+
+            # # Check gap to walls
             # wall_bounds = [
             #     left_wall.bounds, right_wall.bounds, front_wall.bounds,
             #     back_wall.bounds
@@ -211,7 +230,7 @@ def process_mesh(category_all, task_id, args):
             #         wall_bound[1, 0], wall_bound[1, 1]
             #     )
             #     offset = rect_distance(a, b)
-            #     if offset < min_obs_space:
+            #     if offset < 0.1: # min_obs_space:
             #         overlap = True
             #         break
 
@@ -220,16 +239,17 @@ def process_mesh(category_all, task_id, args):
             print('obs_attempt == max_obs_attempt')
             return 0
 
-        alpha = random.uniform(0, 2 * np.pi)
+        # Sample rotation
+        # alpha = random.uniform(0, 2 * np.pi)
         # desk_height = desk.bounds[1, 1] - desk.bounds[1, 0]
-        # piece.apply_transform([
-        #     [np.cos(alpha), -np.sin(alpha), 0, x_pos],
-        #     [np.sin(alpha), np.cos(alpha), 0, y_pos],
-        #     [0, 0, 1, 0],
-        #     [0, 0, 0, 1],
-        # ]) # add rotation
-        piece.apply_transform([[1, 0, 0, x_pos], [0, 1, 0, y_pos],
-                               [0, 0, 1, 0], [0, 0, 0, 1]])
+        piece.apply_transform([
+            [np.cos(alpha), -np.sin(alpha), 0, x_pos],
+            [np.sin(alpha), np.cos(alpha), 0, y_pos],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ]) # add rotation
+        # piece.apply_transform([[1, 0, 0, x_pos], [0, 1, 0, y_pos],
+        #                        [0, 0, 1, 0], [0, 0, 0, 1]])
         piece_bounds = piece.bounds  # update after transform before being saved
 
         # Add to room
@@ -255,7 +275,8 @@ def process_mesh(category_all, task_id, args):
     room_voxels_2d[:, 1] = 1
     room_voxels_2d[:, -2] = 1
     # room_voxels.show()
-    plt.show()
+    # plt.show()
+    # breakpoint()
 
     # Sample init and goal
     init_goal_attempt = -1
@@ -365,6 +386,10 @@ def process_mesh(category_all, task_id, args):
     plt.imshow(room_voxels_2d)
     plt.scatter(init_state_bin[1], init_state_bin[0], s=10, color='red')
     plt.scatter(goal_state_bin[1], goal_state_bin[0], s=10, color='green')
+    # circle = plt.Circle((3 / grid_pitch, 0.6 / grid_pitch),
+    #                 1.5 / grid_pitch,
+    #                 color='red', fill=False, linestyle='dashed')
+    # plt.gca().add_artist(circle)  # Add the restricted region as a dashed circle
     plt.savefig(os.path.join(save_path, 'task.png'))
     plt.close()
     grid_path = os.path.join(save_path, 'occupancy_grid.npz')
@@ -393,6 +418,17 @@ def process_mesh(category_all, task_id, args):
 def process_mesh_helper(args):
     return process_mesh(args[0], args[1], args[2])
 
+def is_in_restricted_region(bounds, center=(0.6,-1), radius=1.5):
+    """Check if any part of the bounding box is inside the restricted region."""
+    for corner in [
+        (bounds[0, 0], bounds[0, 1]),
+        (bounds[1, 0], bounds[0, 1]),
+        (bounds[0, 0], bounds[1, 1]),
+        (bounds[1, 0], bounds[1, 1]),
+    ]:
+        if np.sqrt((corner[0] - center[0])**2 + (corner[1] - center[1])**2) < radius:
+            return True
+    return False
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -403,7 +439,7 @@ if __name__ == "__main__":
         help='number of cpu threads to use',
     )
     parser.add_argument(
-        '--save_task_folder', default='/home/zm2074/Projects/data/perception-guarantees/room_0805/',
+        '--save_task_folder', default='/home/zm2074/Projects/data/perception-guarantees/room_1210_rot/',
         nargs='?', help='path to save the task files'
     )
     parser.add_argument(
@@ -415,7 +451,7 @@ if __name__ == "__main__":
     #     help='use simplified mesh'
     # )
     parser.add_argument(
-        '--num_room', default=500, nargs='?', type=int,
+        '--num_room', default=100, nargs='?', type=int,
         help='number of rooms to generate'
     )
     parser.add_argument(

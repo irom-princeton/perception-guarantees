@@ -7,25 +7,22 @@ from pqdict import pqdict
 from scipy.spatial.distance import cdist
 from scipy.linalg import expm
 from scipy.stats import rankdata
-from scipy.ndimage import median_filter
+from pathlib import Path
 
 import pickle
 
 # load model parameters
-k1= 0.1;k2= 0.2
-A = np.array([[0,0,1,0],[0,0,0,1],[0,0,-k1,0],[0,0,0,-k2]])
-B = np.array([[0,0],[0,0],[k1,0],[0,k2]])
-R = np.array([[0.5,0],[0,0.5]])
+# base path
+base_path: Path = Path(__file__).parent.parent
 
-BRB = B@np.linalg.inv(R)@B.T
+[k1, k2, A, B, R, BRB] = pickle.load(open(f'{base_path}/planning/sp_var.pkl','rb'))
 expA = expm(A*10**3)
-
 
 class World():
     def __init__(self, 
                  map_design: np.ndarray,
                  fov: int = 60, #degrees
-                 sensor_range: int = 52, #pixels
+                 sensor_range: int = 48, #pixels
                  path_resolution: float = 0.1,
                  rr: float = 1.0,
                 ):
@@ -65,7 +62,7 @@ class World():
                     angle = np.arctan2(y, x)
                     angle = np.rad2deg(angle)
                     angle = (angle + 360) % 360
-                    if (angle >  - fov/2) and (angle < + fov/2) and 10<distance<50:
+                    if (angle >  - fov/2) and (angle < + fov/2) and 15<distance<48:
                         mask_grid[i, j] = 0
 
             return mask_grid
@@ -89,6 +86,19 @@ class World():
         new_map[free_cells] = 0.5
         self.map_design = new_map
 
+        if self.counter == 0:
+            self.map_design = new_grid
+            # add a square of free space around the observer
+            state_grid = self.state_to_pixel(state)
+            for i in range(-15, 16):
+                for j in range(-15, 16):
+                    if np.sqrt(i**2+j**2)<=15 and state_grid[0]+i>=0 and state_grid[0]+i<self.map_size[0] and state_grid[1]+j>=0 and state_grid[1]+j<self.map_size[1]:
+                            self.map_design[state_grid[0]+i, state_grid[1]+j] = 0.5
+                        
+            self.counter += 1
+            return self
+        
+        self.counter += 1
         return self
 
     def occlusion(self, state: tuple) -> 'World':
@@ -128,6 +138,8 @@ class World():
                         break
                     if grid[x][y] == 1:  # 1 means occupied (obstacle)
                         break  # Stop if obstacle is found, everything behind it is occluded
+                    if np.sqrt((x-x0)**2+(y-y0)**2)<15:
+                        continue
                     visible_cells.add((x, y))  # Otherwise, mark as visible
 
             # # add a circle around the observer
@@ -321,9 +333,9 @@ class Safe_Planner():
             right = self.world.map_design[free_space[0][i], min(self.world.map_size[1]-1, free_space[1][i]+1)]
             top = self.world.map_design[max(0, free_space[0][i]-1), free_space[1][i]]
             bottom = self.world.map_design[min(self.world.map_size[0]-1, free_space[0][i]+1), free_space[1][i]]
-            if (left ==0 or right ==0 or top ==0 or bottom ==0) and (
-                left !=1 and right !=1 and top !=1 and bottom !=1
-            ):
+            if (left ==0 or right ==0 or top ==0 or bottom ==0):# and (
+                # left !=1 and right !=1 and top !=1 and bottom !=1
+            # ):
                 boundary.append([free_space[0][i], free_space[1][i]])
 
         # Sample points on the boundary evenly
@@ -364,13 +376,13 @@ class Safe_Planner():
                     dist_to_go = np.linalg.norm(np.array(subgoal[0:2])-np.array(self.Pset[self.goal_id][0:2]))
                 else:
                     dist_to_go = np.inf
-                if dist_to_go <= 1.0: #goal radius
+                if dist_to_go <= 1.5: #goal radius
                     dist_to_go = 0
                 # append
                 costs.append(cost_to_come + 10*dist_to_go/v)
 
         if all(np.isinf(costs)):
-            return None, None
+            return None
         else:
             self.goal_id = subgoal_ids[np.argmin(costs)]
             return self.Pset[self.goal_id]
@@ -429,27 +441,28 @@ class Safe_Planner():
         # goal doesn't have to be valid
         goal_id = np.argmin(cdist(np.array(self.Pset),np.array([goal])), axis=0)[0]
         self.init_goal_id = goal_id
+        self.goal_id = goal_id
 
         # build tree
         z, goal_flag = self.build_tree(start_id, goal_id)
         self.goal_explored = []
         if goal_flag == 1: # path found
-            print("Path found")
+            # print("Path found")
             idx_solution = [x for x in nx.shortest_path(self.graph, start_id, z)]
         else: # no plan, explore intermediate goals
             while goal_flag == 0:
                 goal_loc = self.goal_inter(start_id)
-                
+
                 if goal_loc is None or self.goal_id == goal_id:
                     goal_flag = -1
                     idx_solution = [self.goal_id]
-                    print("No path found")
+                    # print("No path found")
                     break
                 else:
                     if self.goal_id not in self.V_unvisited:
                         idx_solution = [x for x in nx.shortest_path(self.graph, start_id, self.goal_id)]
                         goal_flag = 1
-                        print(f"Intermediate path found from {start_id} to {self.goal_id}")
+                        # print(f"Intermediate path found from {start_id} to {self.goal_id}")
                         break # why doens't break?
 
         

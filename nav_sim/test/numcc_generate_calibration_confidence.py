@@ -240,9 +240,8 @@ def run_viz_udf(model, samples, args):
                 pred = model.decoderl2(cur_query_xyz, seen_points, valid_seen, fea, up_grid_fea, custom_centers = None)
                 pred = model.fc_out(pred)
 
-        max_dist = args.max_dist
         pred_udf = F.relu(pred[:,:,:1]).reshape((-1, 1)) # nQ, 1
-        pred_udf = torch.clamp(pred_udf, max=max_dist) 
+        pred_udf = torch.clamp(pred_udf, max=args.max_dist) 
         all_pred_udf.append(pred_udf)
 
         debug = False
@@ -278,7 +277,7 @@ def run_viz_udf(model, samples, args):
     if debug:
         
         img = (seen_images_no_preprocess[0].permute(1, 2, 0) * 255).cpu().numpy().copy().astype(np.uint8)
-        with open('44_340_viz.html', 'a') as f:
+        with open('351_284_viz.html', 'a') as f:
             generate_html_udf(
                 img,
                 seen_xyz, seen_images_no_preprocess,
@@ -295,58 +294,58 @@ def run_viz_udf(model, samples, args):
                 fn_pc_gt=None
             )
     return all_pred_udf, query_xyz, seen_xyz
+def is_chair_visible(seen_xyz, obstacles, cam_position, visualize=False):
+    is_vis = [False]*len(obstacles)
+    seen_xyz = seen_xyz.squeeze().cpu().numpy()
 
-def loss_mask(camera_pose: np.ndarray, piece_bounds_all: list, fov: int=60, grid: np.ndarray=np.zeros((83,83))) -> np.ndarray:
-    # camera pose in sim frame
-    mask_grid = np.ones_like(grid).astype(float)
-    # convert to grid frame
-    camera_pose = np.array([8-camera_pose[0], 4-camera_pose[1]])
-    # convert campera pose to index
+    right = seen_xyz[:,:,0]
+    down = seen_xyz[:,:,1]
+    forward = seen_xyz[:,:,2]
+
+    seen_xyz = np.stack([forward, -right, -down],axis=2) + np.array(cam_position)
+    for obs_idx, obs in enumerate(obstacles):
+        # Check if any visible points are in the ground truth boxes. If more than 100 points are inside the box, it is marked visible
+        obs = np.array(obs)
+        s=[(seen_xyz[:,:,i]>obs[i]+0.1) & (seen_xyz[:,:,i]<obs[3+i]-0.1) for i in range(3)]
+        s=np.array(s)
+        is_vis_noise=bool(sum(sum(s[0,:]&s[1,:]&s[2,:]))>100)
+        is_vis[obs_idx]  = is_vis_noise
+    
+    if visualize:
+        fig = px.scatter_3d(
+            x=seen_xyz[:, :, 0].flatten(), 
+            y=seen_xyz[:, :, 1].flatten(), 
+            z=seen_xyz[:, :, 2].flatten(),
+            opacity=0.8
+        )
+        fig.update_traces(marker=dict(size=1))
+
+        # add obstacles
+        for obs in obstacles:
+            x = [obs[0], obs[3], obs[3], obs[0], obs[0]]
+            y = [obs[1], obs[1], obs[4], obs[4], obs[1]]
+            z = [obs[2], obs[2], obs[5], obs[5], obs[2]]
+            fig.add_scatter3d(x=x, y=y, z=z, mode='lines')
+
+        fig.update_layout(scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z'
+        ))
+        fig.show()
+    return is_vis
+
+def loss_mask(cam_position: np.ndarray, piece_bounds_all: list, is_viz: list, gt: np.ndarray=np.zeros((83,83)), fov: int=60, far: int=48, near: int=15) -> np.ndarray:
+    mask_grid = np.zeros_like(gt).astype(float) # 1 means counted, 0 means not counted
+    # camera pose in sim frame, convert to grid frame
+    camera_pose = np.array([8-cam_position[0], 4-cam_position[1]])
     camera_pose = (camera_pose*83/8).astype(int)
 
-    def bresenham_line(x0, y0, x1, y1):
-        # Implementation of Bresenham's line algorithm
-        # Returns the list of grid cells that a line from (x0, y0) to (x1, y1) passes through
-        cells = []
-        dx = abs(x1 - x0)
-        dy = abs(y1 - y0)
-        sx = 1 if x0 < x1 else -1
-        sy = 1 if y0 < y1 else -1
-        err = dx - dy
-
-        while True:
-            cells.append((x0, y0))
-            if x0 == x1 and y0 == y1:
-                break
-            e2 = 2 * err
-            if e2 > -dy:
-                err -= dy
-                x0 += sx
-            if e2 < dx:
-                err += dx
-                y0 += sy
-        return cells
-
-    def compute_occlusion(grid, observer_pos, sensor_range):
-        visible_cells = set()
-        x0, y0 = observer_pos
-        for angle in np.arange(-fov/2,fov/2):  # Cast rays inside fov
-            x1 = x0 - int(sensor_range * np.cos(angle*np.pi/180))
-            y1 = y0 + int(sensor_range * np.sin(angle*np.pi/180))
-            ray_cells = bresenham_line(x0, y0, x1, y1)
-            
-            for (x, y) in ray_cells:
-                if x < 0 or x >= grid.shape[0] or y < 0 or y >= grid.shape[1]:
-                    break
-                if grid[x][y] == 1:  # 1 means occupied (obstacle)
-                    break  # Stop if obstacle is found, everything behind it is occluded
-                visible_cells.add((x, y))  # Otherwise, mark as visible
-
-
-        return visible_cells
+    # first check if camera is inside obstacles
+    if gt[camera_pose[0], camera_pose[1]] == 1:
+        return mask_grid
     
-    visible_cells = compute_occlusion(grid, camera_pose, 48)
-    
+    # field of view
     for i in range(mask_grid.shape[0]):
         for j in range(mask_grid.shape[1]):
             x = camera_pose[0] - i
@@ -355,39 +354,20 @@ def loss_mask(camera_pose: np.ndarray, piece_bounds_all: list, fov: int=60, grid
             angle = np.arctan2(y, x)
             angle = np.rad2deg(angle)
             angle = (angle + 360) % 360
-            if (angle >  - fov/2) and (angle < + fov/2) and 11<distance<48:
-                mask_grid[i, j] = 0
+            if (angle >  - fov/2) and (angle < + fov/2) and near<distance<far:
+                mask_grid[i, j] = 1
 
-    # mark the piece positions
-    for piece_i in range(len(piece_bounds_all)):
-        piece_bound = piece_bounds_all[piece_i]
-        mins = (np.floor(np.array([8-piece_bound[3], 4-piece_bound[4]])*83/8)).astype(int) 
-        maxs = (np.ceil(np.array([8-piece_bound[0], 4-piece_bound[1]])*83/8)).astype(int) 
-        # print(mins, maxs)
-        piece_mesh = np.meshgrid(np.arange(mins[0], min(82,maxs[0]+1)), np.arange(mins[1], min(82,maxs[1]+1)))
-        piece_mesh = np.array(piece_mesh).reshape(2, -1).T
-        piece_mesh = piece_mesh[grid[piece_mesh[:,0], piece_mesh[:,1]]==1]
-        piece_mesh_grid = np.zeros_like(grid)
-        piece_mesh_grid[piece_mesh[:,0], piece_mesh[:,1]] = 1
-        for (x,y) in piece_mesh:
-            piece_mesh_grid[x-1:x+2, y-1:y+2] = 1
-
-        n_visible = 0
-        for (x,y) in visible_cells:
-            if (mins[0] <= x <= maxs[0] 
-                and mins[1] <= y <= maxs[1] # within bounding box
-                and piece_mesh_grid[x, y] == 1): # is one pixel around true piece
-                n_visible += 1
-        # print('piece_i', piece_i, 'n_visible', n_visible)
-        if n_visible <= 2:
-            # mark the whole box
+    # count occlusion
+    for piece_i, piece_bound in enumerate(piece_bounds_all):
+        if is_viz[piece_i]==False: # mask out invisble pieces
+            mins = (np.floor(np.array([8-piece_bound[3], 4-piece_bound[4]])*82/8)).astype(int) 
+            maxs = (np.ceil(np.array([8-piece_bound[0], 4-piece_bound[1]])*83/8)).astype(int) 
+            piece_mesh = np.meshgrid(np.arange(mins[0], min(82, maxs[0]+1)), np.arange(mins[1], min(82, maxs[1]+1)))
+            piece_mesh = np.array(piece_mesh).reshape(2, -1).T
+            piece_mesh = piece_mesh[gt[piece_mesh[:,0], piece_mesh[:,1]]==1]
+            mask_grid[piece_mesh[:,0], piece_mesh[:,1]] = 0
             
-            for i in range(mins[0],  min(82,maxs[0]+1)):
-                for j in range(mins[1],  min(82,maxs[1]+1)):
-                    if grid[i, j] == 1:
-                        mask_grid[i, j] = 1
-        
-    true_grid = np.logical_and(grid,1-mask_grid).astype(int)
+    true_grid = np.logical_and(mask_grid, gt).astype(int)
 
     return true_grid
 
@@ -402,7 +382,8 @@ def plot_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_
         pred_points = np.append(pred_points, pts, axis = 0)
     
     pred_grid = visualize(pred_points, seen_xyz, cam_position)
-    true_grid = loss_mask(cam_position, task, fov=65, grid=gt)
+    is_viz = is_chair_visible(seen_xyz, piece_bounds_all, cam_position)
+    true_grid = loss_mask(cam_position, piece_bounds_all, is_viz, fov=60, gt=gt)
     coverage = pred_grid - true_grid
 
 
@@ -428,7 +409,8 @@ def find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_
         pred_points = np.append(pred_points, pts, axis = 0)
     
     pred_grid = visualize(pred_points, seen_xyz, cam_position)
-    true_grid = loss_mask(cam_position, piece_bounds_all=piece_bounds_all, fov=60, grid=gt)
+    is_viz = is_chair_visible(seen_xyz, piece_bounds_all, cam_position)
+    true_grid = loss_mask(cam_position, piece_bounds_all=piece_bounds_all, is_viz=is_viz, fov=60, gt=gt)
     coverage = pred_grid - true_grid
 
     # fig = px.imshow(coverage, title=f'Threshold {np.round(t,2)}')
@@ -449,7 +431,7 @@ def find_threshold(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, piece_bo
     coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_bounds_all)
 
     while loss(coverage) != 0 and t < 1:
-        t += 0.01
+        t += 0.002
         coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_bounds_all)
 
         # print(t)
@@ -530,17 +512,17 @@ def main():
     ######## RUN ENVIRONMENTS ############
 
     ## load task
-    task_dataset = pg_path.parent/'data/perception-guarantees/task_0803.pkl'
+    task_dataset = pg_path.parent/'data/perception-guarantees/task_1210_rot.pkl'
 
-    for task_idx in range(162,400):
-    # task_idx = 118
-        print(f'Running task {task_idx}')
-        task = load_task(task_dataset, task_idx)
+    # for task_idx in range(162,400):
+    task_idx = 351
+    print(f'Running task {task_idx}')
+    task = load_task(task_dataset, task_idx)
 
-        env_results = run_env(task, model, numcc_args)
+    env_results = run_env(task, model, numcc_args)
     
-        with open(data_path /'task_numcc'/f'task_0803_{task_idx}.pkl', 'wb') as f:
-            pickle.dump(env_results, f)
+        # with open(data_path /'task_numcc'/f'task_0803_{task_idx}.pkl', 'wb') as f:
+        #     pickle.dump(env_results, f)
     
 
     return 

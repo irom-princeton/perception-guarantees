@@ -38,11 +38,11 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--save_path', default='/home/zm2074/Projects/data/perception-guarantees/task_sim.pkl',
+        '--save_path', default='/home/zm2074/Projects/data/perception-guarantees/task_1203_rot.pkl',
         nargs='?', help='path to save the task dataset'
     )
     parser.add_argument(
-        '--task_folder', default='/home/zm2074/Projects/data/perception-guarantees/rooms_sim',
+        '--task_folder', default='/home/zm2074/Projects/data/perception-guarantees/room_1203_rot',
         nargs='?', help='path to all the room configurations'
     )
     parser.add_argument('--seed', default=42, type=int, help='random seed')

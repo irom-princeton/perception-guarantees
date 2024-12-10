@@ -30,33 +30,53 @@ def diff_conditional_success(epsilon_hat, desired_success_prob, N, delta):
 
 def main_numcc():
 	folder_path = data_path/'perception-guarantees/task_numcc'
-	losses = []
+	losses = pickle.load(open(base_path/'thresholds_4.pkl', 'rb'))
+	# losses = []
 
-	file_names = [f for f in os.listdir(folder_path) if f.endswith('.pkl')]
-	for filename in file_names:
-		with open(f'{folder_path}/{filename}', 'rb') as f:
-			data = pickle.load(f)
-			# find largest threshold that's not 1
-			i = 1
-			while True:
-				delta = np.sort(data['thresholds'])[-i]
-				worst_step = np.where(data['thresholds'] == delta)[0][0]
-				row = np.where(data['coverages'][worst_step] == -1)[0]
-				if len(row) > 0:
-					if not np.all(row == 0):
-						break
-				else:
-					break
+	# still_bad = pickle.load(open(base_path/'still_bad_results.pkl', 'rb'))
+	# still_bad_ts = pickle.load(open(base_path/'still_bad_ts.pkl', 'rb'))
 
-				i += 1
 
-			losses.append(delta)
+	# file_names = [f for f in os.listdir(folder_path) if f.endswith('.pkl')]
+	# for i in range(len(file_names)):
+	# 	filename = file_names[i]
+	# 	# with open(f'{folder_path}/{filename}', 'rb') as f:
+	# 	# 	data = pickle.load(f)
+	# 	task_idx = int(filename.split('_')[-1].split('.')[0])
+	# 	bad_ones = []
+	# 	for j in range(len(still_bad)):
+	# 		if still_bad[j]['task'] == task_idx:
+	# 			bad_ones.append(still_bad_ts[j])
+
+	# 	if len(bad_ones) != 0:
+	# 		delta = np.max(bad_ones)
+	# 		losses[i] = np.min([losses[i], delta])
+		
+
+	# 		# find largest threshold that's not 1
+	# 		i = 1
+	# 		while True:
+	# 			delta = np.sort(data['thresholds'])[-i]
+	# 			worst_step = np.where(data['thresholds'] == delta)[0][0]
+	# 			row = np.where(data['coverages'][worst_step] == -1)[0]
+	# 			if len(row) > 0:
+	# 				if not np.all(row == 0):
+	# 					break
+	# 			else:
+	# 				break
+
+	# 			i += 1
+
+		# losses.append(delta)
+
+	
+
 	
 	# plot histogram of losses
 	fig = go.Figure(data=[go.Histogram(x=losses)])
 	fig.show()
 
-	desired_epsilon = 0.15
+	desired_epsilon = 0.12
 	desired_success_prob = 1-desired_epsilon
 	delta = 0.01
 	N = len(losses)

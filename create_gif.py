@@ -14,6 +14,6 @@ def create_gif(image_paths, output_gif_path, duration=500):
     )
 
 if __name__ == '__main__':
-    # image_paths = [f'{i+1}_map.png' for i in range(17)]
-    image_paths = [f'coverage_{i:.2f}.png' for i in np.arange(0.25,0.99,0.01)]
-    create_gif(image_paths, 'output.gif', duration=500)
+    image_paths = [f'{i+1}_map.png' for i in range(55)]
+    # image_paths = [f'coverage_{i:.2f}.png' for i in np.arange(0.25,0.99,0.01)]
+    create_gif(image_paths, 'output.gif', duration=80)

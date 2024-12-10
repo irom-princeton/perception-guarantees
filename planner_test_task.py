@@ -33,9 +33,9 @@ except RuntimeError:
 
 from models.model_perception import MLPModelDet
 
-f = open('planning/pre_compute/reachable-1.5k.pkl', 'rb')
+f = open('planning/pre_compute/reachable-2k.pkl', 'rb')
 reachable = pickle.load(f)
-f = open('planning/pre_compute/Pset-1.5k.pkl', 'rb')
+f = open('planning/pre_compute/Pset-2k.pkl', 'rb')
 Pset = pickle.load(f)
 dt = 0.1
 print("dt=", dt)
@@ -83,8 +83,8 @@ robot_radius = 0.3
 # cp = 0.016 # 75% baseline
 # cp = 0.6249 # 500 samples
 # cp = 0.7086 # 1k samples
-cp = 0.6910 # 1.5k samples
-# cp = 0.7441 # 2k samples
+# cp = 0.6910 # 1.5k samples
+cp = 0.7441 # 2k samples
 is_finetune=False
 if is_finetune:
     cp=0.65 # 85% PwC
@@ -93,7 +93,7 @@ if is_finetune:
     model_cp.load_state_dict(torch.load("trained_models/perception_model"))
 print("CP: ", cp)
 
-foldername = "../data/perception-guarantees/rooms_multiple/"
+foldername = "../data/perception-guarantees/room_1203_rot/"
 
 def state_to_planner(state, sp):
     # convert robot state to planner coordinates
@@ -148,7 +148,7 @@ def plan_env(task):
     # task.init_state = [float(v) for v in init_state]
     # task.goal_loc = [float(v) for v in goal_loc]
     planner_init_state = [5,0.2,0,0]
-    sp = Safe_Planner(init_state=planner_init_state, FoV=70*np.pi/180, n_samples=len(Pset)-1,dt=dt,radius = 0.1, sensor_dt=0.2, max_search_iter=2000)
+    sp = Safe_Planner(init_state=planner_init_state, FoV=60*np.pi/180, n_samples=len(Pset)-1,dt=dt,radius = 0.1, sensor_dt=0.2, max_search_iter=2000)
     sp.load_reachable(Pset, reachable)
     env.dt = sp.dt
     env.reset(task)
@@ -263,7 +263,7 @@ def plot_results(filename, state_traj , ground_truth, sp):
             state_tf = state_tf.reshape((4,1))
         ax.plot(state_tf[0, :], state_tf[1, :], c='r', linewidth=1, label='state')
     plt.legend()
-    plt.savefig(filename + 'traj_plot_1.5k.png')
+    plt.savefig(filename + 'traj_plot_2k.png')
     # plt.show()
 
 def get_box(observation_, visualize = False):
@@ -403,11 +403,11 @@ def multi_run_wrapper(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--task_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task_multiple.pkl',
+        '--task_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task_1203_rot.pkl',
         nargs='?', help='path to save the task files'
     )
     parser.add_argument(
-        '--save_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task_multiple.npz',
+        '--save_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task_1203_rot.npz',
         nargs='?', help='path to save the task files'
     )
     args = parser.parse_args()
@@ -453,7 +453,7 @@ if __name__ == '__main__':
         task.observation.lidar.vertical_res = 1  # resolution, in degree , 1
         task.observation.lidar.vertical_fov = 30  # half in one direction, in degree
         task.observation.lidar.max_range = 5 # in meter Anushri changed from 5 to 8
-        task.env= ii
+        task.env= task.base_path.split('/')[-1]
         ii+=1
 
         # Run environment
@@ -472,7 +472,7 @@ if __name__ == '__main__':
     # _, _, _ = render_env(seed=0)
 
     ##################################################################
-    env = 53
+    env = 0
     batch_size = num_parallel
     save_file = args.save_dataset
     save_res = []
@@ -496,7 +496,7 @@ if __name__ == '__main__':
                 ii = 0
                 for result in results.get():
                     # Save data
-                    file_batch = foldername+ str(env-batch_size+ii) + "/cp_" + str(cp) + "_1.5k.npz"
+                    file_batch = foldername+ str(env-batch_size+ii) + "/cp_" + str(cp) + "_2k.npz"
                     np.savez_compressed(file_batch, data=result)
                     ii+=1
         # result = plan_env(task)
