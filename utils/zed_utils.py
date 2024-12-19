@@ -4,6 +4,7 @@ from scipy.spatial.transform import Rotation
 import tf
 import time
 from mpl_toolkits.mplot3d import Axes3D
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 import sys
 sys.path.append('datasets')
@@ -171,7 +172,7 @@ class Zed:
 
         return yaw
 
-    def get_boxes(self, cp=0.4, num_boxes=5, is_finetune=False):
+    def get_boxes(self, cp=0.4, num_boxes=5, is_finetune=False, visualize=False):
         # Get pointcloud
         # self.zed.retrieve_measure(self.pc, sl.MEASURE.XYZRGBA,sl.MEM.CPU, res)
 
@@ -203,7 +204,7 @@ class Zed:
             points = np.copy(points_)
             # TODO: made adjustments to point cloud to test camera error
             points[:,1] = points_[:,0]
-            points[:,0] = -points_[:,1] + 1.25
+            points[:,0] = -points_[:,1]
 
             # points_temp = np.copy(points)
             # points[:,2] = points_temp[:,1]
@@ -219,7 +220,7 @@ class Zed:
                     points_ds = preprocess_point_cloud(points, self.num_pc_points)
                     points_ds = points_ds.reshape((batch_size, self.num_pc_points, 3))
                     pc_all = torch.from_numpy(points_ds).to(self.device)
-                    boxes, box_features = self.get_box_from_pc(pc_all, cp, num_boxes,  is_finetune, False)
+                    boxes, box_features = self.get_box_from_pc(pc_all, cp, num_boxes,  is_finetune, visualize)
                 else:
                     print("returns giant box")
                     points = np.zeros((1,self.num_pc_points, 3),dtype='float32')
@@ -314,24 +315,38 @@ class Zed:
         # model_outputs_all["box_features"][env,batch_inds,:,:] = outputs["box_features"].detach().cpu()
 
         chair_prob = cls_prob[:,:,3]
-        print("*************CHAIR PROBABILITIES: ", chair_prob)
+        # print("*************CHAIR PROBABILITIES: ", chair_prob)
         obj_prob = outputs["outputs"]["objectness_prob"].clone().detach().cpu()
-        print("-------------OBJECT PROBABILITIES: ", obj_prob)
+        # print("-------------OBJECT PROBABILITIES: ", obj_prob)
         sort_box = torch.sort(obj_prob,1,descending=True)
 
-        visualize = True
         if visualize:
             pc = pc_all.detach().cpu()
             pc_plot = pc[:, pc[0,:,2] > 0.0,:]
-            plt.figure()
-            ax = plt.axes(projection='3d')
-            ax.scatter3D(
-                pc_plot[0,:,0], pc_plot[0,:,1],pc_plot[0,:,2]
-            )
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.set_aspect('auto')
+            # use plotly instead
+            fig = go.Figure()
+
+            fig.add_trace(go.Scatter3d(
+                x=pc_plot[0,:,0],
+                y=pc_plot[0,:,1],
+                z=pc_plot[0,:,2],
+                mode='markers',
+                marker=dict(
+                    size=1,
+                    color='blue',
+                    opacity=0.8
+                )
+            ))
+
+            # plt.figure()
+            # ax = plt.axes(projection='3d')
+            # ax.scatter3D(
+            #     pc_plot[0,:,0], pc_plot[0,:,1],pc_plot[0,:,2], s=0.1
+            # )
+            # ax.set_xlabel('X')
+            # ax.set_ylabel('Y')
+            # ax.set_zlabel('Z')
+            # ax.set_aspect('auto')
 
         num_probs = 0
         boxes = np.zeros((num_boxes, 2,3))
@@ -359,7 +374,7 @@ class Zed:
                         boxes[num_probs,:,:] = bb
                         num_probs +=1
 
-                if visualize:
+                if visualize and not flag:
                     r0 = [bb[0, 0], bb[1, 0]]
                     r1 = [bb[0, 1], bb[1, 1]]
                     r2 = [bb[0, 2], bb[1, 2]]
@@ -368,13 +383,32 @@ class Zed:
                         if (np.sum(np.abs(s-e)) == r0[1]-r0[0] or 
                             np.sum(np.abs(s-e)) == r1[1]-r1[0] or 
                             np.sum(np.abs(s-e)) == r2[1]-r2[0]):
-                            if (visualize and not flag):
-                                ax.plot3D(*zip(s, e), color=(0.5+0.5*prob, 0.1,0.1))
+                            fig.add_trace(go.Scatter3d(
+                                x=[s[0],e[0]],
+                                y=[s[1],e[1]],
+                                z=[s[2],e[2]],
+                                mode='lines',
+                                line=dict(
+                                    color=f'rgba({255*(1-prob):.0f},50,50,0.8)',
+                                    width=2
+                                )
+                            ))
+                            # if (visualize and not flag):
+                                # ax.plot3D(*zip(s, e), color=(0.5+0.5*prob, 0.1,0.1))
 
                     
         if visualize:
-            now = datetime.datetime.now()
-            plt.savefig(f'pointcloud_{now.time()}.png')
+            fig.update_layout(
+                scene=dict(
+                    xaxis_title="X",
+                    yaxis_title="Y",
+                    zaxis_title="Z",
+                    aspectmode='data'
+                )
+            )
+            fig.show()
+            # now = datetime.datetime.now()
+            # plt.savefig(f'pointcloud_{now.time()}.png')
         # boxes[:,0,:] -= cp
         # boxes[:,1,:] += cp
 

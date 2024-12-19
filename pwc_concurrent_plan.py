@@ -21,22 +21,24 @@ class Robot_Plan:
         #self.replan = True # set if want to just follow open loop plan
         #self.save_traj = False  # set if want to save trajectory and compare against plan
         #self.plot_traj = True  # set if want to visualize trajectory at the end of execution
-        goal_forrestal = [7.0, 0.0, 1.5, 0.0] # goal in forrestal coordinates
+        goal_forrestal = [7.0, -2.0, 1.5, 0.0] # goal in forrestal coordinates
         dt = 0.1 #   planner dt
         radius = 0.7 # distance between intermediate goals on the frontier
         chairs = [1, 2, 3, 4,5,6, 7, 8, 9, 10, 11, 12]  # list of chair labels to be used to get ground truth bounding boxes
         self.num_detect = 8  # number of boxes for 3DETR to detect
-        robot_radius = 0.14
-        self.cp = 0.73 # 0.73 # 0.61 #0.02
-        #self.cp = 0.02
-        sensor_dt = 0.8 # time in seconds to replan
+        # robot_radius = 0.14
+        # self.cp = 0.73 # 0.73 # 0.61 #0.02
+        self.cp = 0.02
+        sensor_dt = 0.4 # time in seconds to replan
         num_times_detect = 1
         max_search_iter = 2000
         #result_dir = 'results/supplementary_middle_goal_dt_08_cp002/' # set to unique trial identifier if saving results
         self.result_dir = None
         self.is_finetune = False
         self.speed = 1.5
-        self.execution_steps = 20
+        self.scale_lateral = 0.75
+        self.scale_forward = 0.8
+        self.execution_steps = 10
         # ****************************************************
 
         # ****************************************************
@@ -96,14 +98,14 @@ class Robot_Plan:
      # ****************************************************
 
     def transform_policy(self, arr):
-        print("Input Policy:", arr)
+        # print("Input Policy:", arr)
         
         # Where the input policy is empty
         if len(arr) == 0:
             # Try to resort to the last policy
             if self.last_plan is not None and len(self.last_plan[2]) > 0:
                 alternative_plan = np.vstack(self.last_plan[2]) if len(self.last_plan[2]) > 1 else np.array(self.last_plan[2])
-                print("Alternative plan:", alternative_plan)
+                # print("Alternative plan:", alternative_plan)
 
                 # Determine the starting index for policy extraction
                 start_index = self.execution_steps * self.count_used_last_plan
@@ -115,8 +117,10 @@ class Robot_Plan:
 
                 # Extract remaining steps
                 policy_before_transformation = alternative_plan[start_index:]
+                policy_before_transformation[:,0] *= self.scale_lateral
+                policy_before_transformation[:,1] *= self.scale_forward
                 self.count_used_last_plan += 1
-                print("Remaining alternative plan:", policy_before_transformation)
+                # print("Remaining alternative plan:", policy_before_transformation)
             else:
                 print("No valid plan found. Returning None.")
                 return None
@@ -125,10 +129,16 @@ class Robot_Plan:
         elif len(arr) > 1:
             # Combine multiple trajectories
             policy_before_transformation = np.vstack(arr)
+            policy_before_transformation[:,0] *= self.scale_lateral
+            policy_before_transformation[:,1] *= self.scale_forward
+
             print("Multiple trajectories in policy.")
         else:
             # Use the only trajectory in this case
             policy_before_transformation = np.array(arr[0])
+            policy_before_transformation[:,0] *= self.scale_lateral
+            policy_before_transformation[:,1] *= self.scale_forward
+
             print("Single trajectory case.")
 
         print("Before transformation:", policy_before_transformation)
@@ -157,7 +167,7 @@ class Robot_Plan:
 
     def plan(self):
         print("Starting planning...")
-        
+
         with self.lock:
             if self.current_plan is None or len(self.current_plan[1])==0:
                 # Currently no plan in place -- must use true state
@@ -181,7 +191,7 @@ class Robot_Plan:
 
         # Step 1: Object detection using the camera
         t_1 = time.time()
-        boxes = self.go1.camera.get_boxes(self.cp, self.num_detect, self.is_finetune)
+        boxes = self.go1.camera.get_boxes(self.cp, self.num_detect, self.is_finetune,visualize=False)
         t_2 = time.time()
         print(f"Inference time: {t_2 - t_1:.4f} seconds")
 
@@ -197,10 +207,10 @@ class Robot_Plan:
         t_4 = time.time()
         print(f"Planning time: {t_4 - t_3:.4f} seconds")
         
-        # if len(new_plan[0]) > 0:
-        #     print('Saving figure...')
-        #     fig = self.sp.show(new_plan[0], true_state=true_state, planned_state=plan_state,true_boxes=None)
-        #     plt.savefig(f'images/{t_4}.png', dpi=300, bbox_inches='tight')
+        if len(new_plan[0]) > 0:
+            print('Saving figure...')
+            fig = self.sp.show(new_plan[0], true_state=true_state, planned_state=None,true_boxes=None)
+            plt.savefig(f'images/{t_4}.png', dpi=300, bbox_inches='tight')
 
         with self.lock:
             self.next_plan = new_plan

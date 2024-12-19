@@ -92,7 +92,7 @@ def plan_loop():
     plan_traj = []
     replan_states = []
     replan_times = []
-    #SPs = []
+    SPs = []
     actions_applied = []
 
     # load pre-computed: need to recompute for actual gains
@@ -136,7 +136,7 @@ def plan_loop():
     
     # ****************************************************
     # GET INITIAL PLAN
-    #SPs.append(copy.deepcopy(sp))
+    SPs.append(copy.deepcopy(sp))
     t = 0
 
     # perception + cp
@@ -175,7 +175,7 @@ def plan_loop():
 
     gs, _, yaw = go1.get_state()
     state_traj.append(gs)
-    #SPs.append(copy.deepcopy(sp))
+    SPs.append(copy.deepcopy(sp))
     
     # fig, ax = sp.world.show()
     # plt.show()
@@ -222,7 +222,7 @@ def plan_loop():
             # et = time.time()
             # t += (et-st)
             # replan_times.append(plan_et-plan_st)
-            #SPs.append(copy.deepcopy(sp))
+            SPs.append(copy.deepcopy(sp))
             # if plot_traj and len(res[0]) > 1:
             #     t_str = str(round(t, 1))
             #     plot_trajectories(plan_traj, sp, vicon_traj, state_traj, replan_state=replan_states, ground_truth=[ground_truth, chair_yaws], replan=replan, save_fig=save_traj, filename=result_dir+t_str)
@@ -334,18 +334,18 @@ def plan_loop():
 
     # print("res 2", res[2])
     if save_traj:
-        # check_dir(result_dir)
-        #SPs.append(copy.deepcopy(sp))
+        check_dir(result_dir)
+        SPs.append(copy.deepcopy(sp))
         with open(result_dir + 'plan.pkl', 'wb') as f:
             pickle.dump(plan_traj, f)
         np.save(result_dir + 'state_traj.npy', state_traj)
-        with open(result_dir + 'ground_truth_bb.pkl', 'wb') as f:
-            pickle.dump([ground_truth, chair_yaws], f)
-        # with open(result_dir + 'safe_planners.pkl', 'wb') as f:
-        #     pickle.dump(SPs, f)
-        np.save(result_dir + 'replan_times.npy', replan_times)
-        np.save(result_dir + 'action_applied.npy', actions_applied)
-        np.save(result_dir + 'replan_states.npy', replan_states)
+        # with open(result_dir + 'ground_truth_bb.pkl', 'wb') as f:
+        #     pickle.dump([ground_truth, chair_yaws], f)
+        with open(result_dir + 'safe_planners.pkl', 'wb') as f:
+            pickle.dump(SPs, f)
+        # np.save(result_dir + 'replan_times.npy', replan_times)
+        # np.save(result_dir + 'action_applied.npy', actions_applied)
+        # np.save(result_dir + 'replan_states.npy', replan_states)
         if vicon:
             np.save(result_dir + 'vicon_traj.npy', vicon_traj)
 

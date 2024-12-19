@@ -112,7 +112,7 @@ class Safe_Planner:
                  init_state: list = [4,1,0,0.5], # initial state [x,y,vx,vy]
                  goal_f: list = [7,-2,0.5,0], # goal location with forrestal coordinates
                  dt: float = 0.1, # time resolution for controls
-                 sensor_dt: float = 1, # time resolution for perception update
+                 sensor_dt: float = 0.5, # time resolution for perception update
                  r = 3, # cost threshold for reachability
                  radius = 0.5, # radius for finding intermediate goals
                  FoV = 60*np.pi/180, # field of view
@@ -120,7 +120,7 @@ class Safe_Planner:
                  FoV_close = 1, # can't see within 1 meters
                  n_samples = 2000,
                  max_search_iter = 1500,
-                 weight = 10,  # weight for cost to go vs. cost to come
+                 weight = 1,  # weight for cost to go vs. cost to come
                  seed = 0,
                  speed = 0.5):
         
@@ -243,8 +243,19 @@ class Safe_Planner:
                     candidates += [np.array(geom.exterior.interpolate(t).xy).reshape(2) for t in
                                    np.linspace(0,geom.length,
                                            int(np.floor(geom.length/self.radius)),False)]
+        good_candidates = []
+        for candidate in candidates:
+            # discard if going directly into obstacle
+            candidate_point = Point(candidate)
+            good = True
+            for geom in self.world.box_space.geoms:
+                if geom.buffer(0.1).contains(candidate_point):
+                    good = False
+                    continue
+            if good:
+                good_candidates.append(candidate)
         
-        candidates = np.array(candidates)
+        candidates = np.array(good_candidates)
         # print("PRINT CANDIDATES EMILY")
         # breakpoint()
 
@@ -385,7 +396,8 @@ class Safe_Planner:
             x_waypoints = self.reachable[s0][1][3][self.reachable[s0][1][0].index(s1)][0]
             ax.plot(x_waypoints[:,0], x_waypoints[:,1], c='red', linewidth=1)
         ax.plot(self.Pset[self.goal_idx][0],self.Pset[self.goal_idx][1],'o')
-        plt.show()
+        # plt.show()
+        
         
         return fig
 
