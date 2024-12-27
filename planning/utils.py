@@ -77,7 +77,7 @@ def non_det_filter(xbar_prev, xhat_now):
         return xbar_now'''
     # using shapely
     xhat_all = unary_union(turn_box(xhat_now))
-    return xhat_all.intersection(xbar_prev)
+    return xhat_all#.intersection(xbar_prev)
     
         
 

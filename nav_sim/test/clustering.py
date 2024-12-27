@@ -9,8 +9,67 @@ import time
 from multiprocessing import Pool
 import math
 import IPython as ipy
+import plotly.graph_objects as go
+from itertools import product, combinations
+
 
 from sklearn.cluster import DBSCAN
+
+def is_box_visible(X, obstacles, visualize):
+    # t_s = time.time()
+    is_vis = [False]*len(obstacles)
+    noise = np.array(X.T)
+    num_points=len(noise)
+    for obs_idx, obs in enumerate(obstacles):
+        # Check if any visible points are in the ground truth boxes. If more than 100 points are inside the box, it is marked visible
+        if (num_points > 0):
+            obs = np.array(obs)
+            s=[(noise[:,i]>obs[i]+0.1) & (noise[:,i]<obs[3+i]-0.1) for i in range(3)]
+            s=np.array(s)
+            is_vis_noise=bool(sum(s[0,:]&s[1,:]&s[2,:])>100)
+        else: 
+            is_vis_noise = False
+        is_vis[obs_idx]  = is_vis_noise
+    # t_e = time.time()
+    # print("time for checking what's visible ", t_e-t_s)
+    if visualize:
+        # Visualize
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter3d(
+            x=noise[:,0], 
+            y=noise[:,1], 
+            z=noise[:,2],
+            mode='markers',
+            marker=dict(size=1)
+        ))
+        gt_obs = [[[obs[0], obs[1], obs[2]],[obs[3], obs[4], obs[5]]] for obs in obstacles]
+        gt_boxes = np.array(gt_obs)
+
+        for jj, cc in enumerate(gt_boxes):
+            r0 = [cc[0, 0], cc[1, 0]]
+            r1 = [cc[0, 1], cc[1, 1]]
+            r2 = [cc[0, 2], cc[1, 2]]
+
+            for s, e in combinations(np.array(list(product(r0, r1, r2))), 2):
+                if (np.sum(np.abs(s-e)) == r0[1]-r0[0] or 
+                    np.sum(np.abs(s-e)) == r1[1]-r1[0] or 
+                    np.sum(np.abs(s-e)) == r2[1]-r2[0]):
+                    fig.add_trace(go.Scatter3d(
+                        x=[s[0], e[0]], 
+                        y=[s[1], e[1]], 
+                        z=[s[2], e[2]],
+                        mode='lines',
+                        line=dict(color='green')
+                    ))
+
+        fig.update_layout(scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z'
+        ))
+        fig.show()
+    return is_vis
 
 def cluster(X, visualize):
     db = DBSCAN(eps=0.5, min_samples=100).fit(X)

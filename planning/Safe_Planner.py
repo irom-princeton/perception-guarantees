@@ -38,6 +38,7 @@ class World:
             self.box_space = self.box_space.difference(self.free_space) # make sure starts within free space
         else:
             self.box_space = non_det_filter(self.box_space, new_occ_space)
+            self.box_space = self.box_space.difference(self.free_space)
 
         self.occ_space = unary_union(turn_box(new_boxes)) 
         world_polygon = Polygon([[0,0],[8,0],[8,8],[0,8],[0,0]])
@@ -349,7 +350,9 @@ class Safe_Planner:
             x_waypoints = self.reachable[s0][1][3][self.reachable[s0][1][0].index(s1)][0]
             ax.plot(x_waypoints[:,0], x_waypoints[:,1], c='red', linewidth=1)
         ax.plot(self.Pset[self.goal_idx][0],self.Pset[self.goal_idx][1],'o')
-        plt.show()
+        # plt.show()
+        now = tm.localtime()
+        plt.savefig('planning/solution_'+str(now.tm_hour)+'_'+str(now.tm_min)+'_'+str(now.tm_sec)+'.png')
 
     # safety planning algorithm
     def plan(self, state, new_boxes):

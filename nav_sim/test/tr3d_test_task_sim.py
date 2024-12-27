@@ -66,6 +66,7 @@ import matplotlib.pyplot as plt
 import time
 import math
 import json
+import plotly.graph_objects as go
 
 from itertools import product, combinations
 
@@ -95,6 +96,10 @@ from mmdet3d.apis import LidarDet3DInferencer
 import warnings
 warnings.filterwarnings("ignore")
 
+# base path
+pg_path = '/home/may/perception-guarantees'
+room_path = f'{pg_path}/nav_sim/sim_data/room_0803/'
+taskpath = f'{pg_path}/nav_sim/sim_data/task_0803.pkl'
 
 # camera + TR3D
 num_pc_points = 40000
@@ -103,14 +108,14 @@ parser = make_args_parser()
 args = parser.parse_args(args=[])
 
 # Model and weights (Scannet version)
-model = "tr3d_1xb16_scannet-3d-18class.py" # TR3D
-weights = "tr3d_scannet.pth" # TR3D pretrained weights
+model = f"/home/may/mmdetection3d/projects/TR3D/configs/tr3d_1xb16_scannet-3d-18class.py" # TR3D
+weights = f"{pg_path}/models/tr3d_1xb16_scannet-3d-18class.pth" # TR3D pretrained weights
 
 # Initialize inferencer
 inferencer = LidarDet3DInferencer(model=model, weights=weights)
 
 # Load the x,y points to sample
-with open('planning/pre_compute/Pset_1.5_7_2K_ramp_unfiltered.pkl', 'rb') as f:
+with open(f'{pg_path}/planning/pre_compute/Pset-2k.pkl', 'rb') as f:
     samples = pickle.load(f)
     # Remove goal
     samples = samples[:-1][:]
@@ -123,9 +128,10 @@ x = [sample[1] for sample in s]
 y = [sample[0]-4 for sample in s]
 
 num_steps = len(x)
+# num_steps = 10
 
 # Load params from json file
-with open("env_params.json", "r") as read_file:
+with open(f"{pg_path}/env_params.json", "r") as read_file:
     params = json.load(read_file)
 
 
@@ -220,7 +226,7 @@ def run_env(task):
     # np.random.default_rng(12345)
 
     # Run
-    gt_obs = [[[-obs[4], obs[0], obs[2]],[-obs[1], obs[3], obs[5]]] for obs in task.piece_bounds_all]
+    gt_obs = [[[obs[0], obs[1], obs[2]],[obs[3], obs[4], obs[5]]] for obs in task.piece_bounds_all]
     for step in range(num_steps):
         # Execute action
         task, bb, output, matched_gt = run_step(env, task, x, y, step, visualize)
@@ -241,8 +247,8 @@ def run_env(task):
             
 # change to TR3D
 def run_step(env, task, x, y, step, visualize=False):
-    task.init_state = [x[step],y[step],0,0]
-    action = [0,0]
+    # task.init_state = [x[step],y[step],0,0]
+    action = [x[step],y[step]]
     env.reset(task)
     observation, _, _, _ = env.step(action)
     num_chairs = len(task.piece_bounds_all) # Number of chairs in the current environment
@@ -252,36 +258,43 @@ def run_step(env, task, x, y, step, visualize=False):
     task.observation.camera_pos[step] = [float(env.lidar_pos[0]), float(env.lidar_pos[1]), float(env.lidar_pos[2])]
     pos = task.observation.camera_pos[step]
     not_inside_xyz = [[(0 if (pos[i]>obs[i]-0.1 and pos[i]<obs[3+i]+0.1) else 1) for i in range(3)] for obs in task.piece_bounds_all]
-    gt_obs = [[[-obs[4], obs[0], obs[2]],[-obs[1], obs[3], obs[5]]] for obs in task.piece_bounds_all]
+    # gt_obs = [[[-obs[4], obs[0], obs[2]],[-obs[1], obs[3], obs[5]]] for obs in task.piece_bounds_all]
+    gt_obs = [[[obs[0], obs[1], obs[2]],[obs[3], obs[4], obs[5]]] for obs in task.piece_bounds_all]
     task.observation.cam_not_inside_obs[step] = all([True if any(obs) == 1 else False for obs in not_inside_xyz])
     is_vis = [False]*num_chairs
-    
-    # Filter points with z < 0.1, z > 2.9 and abs(y) > 3.9 and x < 0.05, x > 7.95
-    observation = observation[:, observation[2, :] < 2.9]
 
-    X = observation[:, (observation[2, :] > 0.1)]
-    X = X[:, np.abs(X[1,:]) < 3.9]
-    X = X[:, X[0,:] > 0.05]
-    X = X[:, X[0,:] < 7.95]
+    # Filter points with z < 0.1, z > 2.9 and abs(y) > 3.9 and x < 0.05, x > 7.95
+    mask = (observation[:,2]<2.9)&(observation[:,2]>0.1)&(np.abs(observation[:,1])<3.9)&(observation[:,0]>0.05)&(observation[:,0]<7.95)
+    X = observation[mask]
     
     X = np.transpose(np.array(X))
-    if(len(X) > 0):
-        is_vis = is_box_visible(X, task.piece_bounds_all, visualize)
+    if(len(X[0]) > 0):
+        is_vis = is_box_visible(X, task.piece_bounds_all, visualize=False)
+        
         for obs_idx, obs in enumerate(task.piece_bounds_all):
             is_vis[obs_idx] = (is_vis[obs_idx] and task.observation.cam_not_inside_obs[step])
     task.observation.is_visible[step] = is_vis
+    # print("Number of visible objects: ", sum(is_vis))
 
-    if (len(observation[0])>0):
+    visualize = True #sum(is_vis) >1
+    
+
+    if (len(X[0])>0):
         # Get bounding boxes
-        output = get_box(observation, inferencer, conf_threshold=conf_threshold)
+        output = get_box(X, inferencer, conf_threshold=conf_threshold,num_boxes= num_boxes, show_viz=True)
         bb = match_gt_output_boxes(output, np.array(gt_obs), is_vis)
         matched_gt = match_output_gt_boxes(output, np.array(gt_obs), is_vis)
+
+        # plot bb and gt on a 2d plane using plotly
+        if visualize:
+            plot_box_pc(X.T, bb, np.array(gt_obs), is_vis)
     else:
         # There are no returns from the LIDAR, object is not visible
         task.observation.is_visible[step] = [False]*num_chairs
         bb = get_room_size_box(num_chairs)
         output = get_room_size_box(num_boxes)
         matched_gt = match_output_gt_boxes(output, np.array(gt_obs), is_vis) 
+    breakpoint()
     return task, bb, output, matched_gt
 
 # change to TR3D
@@ -289,20 +302,20 @@ def get_box(observation_, inferencer, show_viz=False, conf_threshold=0, num_boxe
     observation = observation_.copy()
     observation = observation.T
 
-    inputs_all = {'inputs': {'points': observation}, 'pred_score_thr': conf_threshold, 'out_dir': '', 'show': show_viz, 'wait_time': -1, 'no_save_vis': True, 'no_save_pred': False, 'print_result': False}
+    inputs_all = {'inputs': {'points': observation}, 'pred_score_thr': conf_threshold, 'out_dir': '', 'show': False, 'wait_time': -1, 'no_save_vis': True, 'no_save_pred': False, 'print_result': False}
     inferencer.show_progress = False
     results = inferencer(**inputs_all)
     
     # "cabinet": 0, "bed": 1, "chair": 2, "sofa": 3, "table": 4, "door": 5, "window": 6, "bookshelf": 7, "picture": 8, 
     # "counter": 9, "desk": 10, "curtain": 11, "refrigerator": 12, "showercurtrain": 13, "toilet": 14, "sink": 15, "bathtub": 16, "garbagebin": 17,
-
+    # breakpoint()
     pred_boxes = results["predictions"][0]["bboxes_3d"]
 
     pred_confidences = results["predictions"][0]["scores_3d"]
     pred_labels = results["predictions"][0]["labels_3d"]
 
     sort_inds = np.argsort(pred_confidences)[::-1]
-    sorted_inds = [i for i in sort_inds[0:num_boxes] if (pred_labels[i] in detect_objects)]
+    sorted_inds = [i for i in sort_inds[0:num_boxes]]# if (pred_labels[i] in detect_objects)]
     bboxes = [pred_boxes[i] for i in sorted_inds]
 
     corners = np.zeros((len(bboxes), 2,3))
@@ -314,6 +327,9 @@ def get_box(observation_, inferencer, show_viz=False, conf_threshold=0, num_boxe
         r2 = [bbox[2], bbox[2]+bbox[5]]
         corners[b,0,:] = [r0[0], r1[0], r2[0]]
         corners[b,1,:] = [r0[1], r1[1], r2[1]]
+
+    if show_viz:
+        plot_box_pc(observation, corners, np.array([]), np.array([True]*len(corners)))
     
     return corners
 
@@ -377,21 +393,18 @@ def match_output_gt_boxes(output_boxes, ground_truth, is_visible):
                     sorted_pred[kk,:,:] = ground_truth[j,:,:]
     return sorted_pred
 
-def plot_box_pc(pc, output_boxes, gt_boxes, is_vis):
+def plot_box_pc(pc_plot, output_boxes, gt_boxes, is_vis):
+
     # Visualize
-    pc_plot = pc[:, pc[0,:,2] > 0.0,:]
-    pc_plot = pc_plot[:, pc_plot[0,:,1]<7.95,:]
-    pc_plot = pc_plot[:, pc_plot[0,:,1]>0.05,:]
-    pc_plot = pc_plot[:, abs(pc_plot[0,:,0]) < 3.9,:]
-    plt.figure()
-    ax = plt.axes(projection='3d')
-    ax.scatter3D(
-        pc_plot[0,:,0], pc_plot[0,:,1],pc_plot[0,:,2]
-    )
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.set_aspect('equal')
+    fig = go.Figure()
+
+    fig.add_trace(go.Scatter3d(
+        x=pc_plot[:,0], 
+        y=pc_plot[:,1], 
+        z=pc_plot[:,2],
+        mode='markers',
+        marker=dict(size=1)
+    ))
 
     for jj, cc in enumerate(output_boxes):
         r0 = [cc[0, 0], cc[1, 0]]
@@ -402,8 +415,13 @@ def plot_box_pc(pc, output_boxes, gt_boxes, is_vis):
             if (np.sum(np.abs(s-e)) == r0[1]-r0[0] or 
                 np.sum(np.abs(s-e)) == r1[1]-r1[0] or 
                 np.sum(np.abs(s-e)) == r2[1]-r2[0]):
-                ax.plot3D(*zip(s, e), color=(0.5, 0.1,0.1))
-
+                fig.add_trace(go.Scatter3d(
+                    x=[s[0], e[0]], 
+                    y=[s[1], e[1]], 
+                    z=[s[2], e[2]],
+                    mode='lines',
+                    line=dict(color='red')
+                ))
     for jj, cc in enumerate(gt_boxes):
         r0 = [cc[0, 0], cc[1, 0]]
         r1 = [cc[0, 1], cc[1, 1]]
@@ -413,8 +431,25 @@ def plot_box_pc(pc, output_boxes, gt_boxes, is_vis):
             if (np.sum(np.abs(s-e)) == r0[1]-r0[0] or 
                 np.sum(np.abs(s-e)) == r1[1]-r1[0] or 
                 np.sum(np.abs(s-e)) == r2[1]-r2[0]):
-                ax.plot3D(*zip(s, e), color=(0.1, 0.5,0.1))
-    plt.show()
+                fig.add_trace(go.Scatter3d(
+                    x=[s[0], e[0]], 
+                    y=[s[1], e[1]], 
+                    z=[s[2], e[2]],
+                    mode='lines',
+                    line=dict(color='green')
+                ))
+
+    fig.update_layout(scene=dict(
+        xaxis_title='X',
+        yaxis_title='Y',
+        zaxis_title='Z',
+        aspectratio=dict(x=1, y=1, z=1),
+        xaxis=dict(range=[-0.2, 8.2]),  # x-axis limits
+        yaxis=dict(range=[-4.2, 4.2]), # y-axis limits
+        zaxis=dict(range=[-0.2, 8.2])  # z-axis limits
+    ))
+
+    fig.show()
 
 # change to TR3D
 def format_results(results):
@@ -423,8 +458,8 @@ def format_results(results):
     num_chairs = results[0]["loss"].shape[1]
     # nqueries = results[0]["box_features"].shape[1]
     # dec_dim = results[0]["box_features"].shape[2]
-    num_pred = results[0]["box_finetune"].shape[1]
-    print("Number of predicted boxes for finetuning: ", num_pred)
+    num_pred = 15 # results[0]["box_finetune"].shape[0]
+    # print("Number of predicted boxes for finetuning: ", num_pred)
     loss_mask = torch.zeros(num_envs, num_cam_positions, num_chairs)
     model_outputs_all = {
         # "box_features": torch.zeros(num_envs, num_cam_positions, nqueries, dec_dim),
@@ -435,13 +470,32 @@ def format_results(results):
         "gt": torch.zeros(num_envs, num_cam_positions, num_pred, 2, 3),
     }
     bboxes_ground_truth_aligned = torch.zeros(num_envs, num_chairs, 2,3)
+
+    def pad_to_shape(arr):
+        max_shape = tuple(max(dim) for dim in zip(*[x.shape for x in arr]))
+        # Pad arrays to the maximum shape
+        padded_array = np.array([
+            np.pad(
+                x, 
+                pad_width=[(0, max_shape[0] - x.shape[0]), 
+                        (0, max_shape[1] - x.shape[1]), 
+                        (0, max_shape[2] - x.shape[2])], 
+                mode='constant', constant_values=0
+            )
+            for x in arr
+        ], dtype=np.float64)
+        return padded_array
+
     for env, result in enumerate(results):
-        loss_mask[env,:,:] = torch.from_numpy(results[env]["loss"]).float()
+        loss_mask[env,:,:] = torch.from_numpy(result["loss"]).float()
+
         # model_outputs_all["box_features"][env,:,:,:] = results[env]["box_features"]
         model_outputs_all["box_axis_aligned"][env,:,:,:] = torch.from_numpy(results[env]["box_axis_aligned"])
         bboxes_ground_truth_aligned[env,:,:,:] = torch.from_numpy(results[env]["bbox_labels"])
-        match_outputs_gt["output"][env,:,:,:] = torch.from_numpy(results[env]["box_finetune"])
-        match_outputs_gt["gt"][env,:,:,:] = torch.from_numpy(results[env]["matched_gt"])
+        box_finetune = pad_to_shape(results[env]["box_finetune"])
+        matched_gt = pad_to_shape(results[env]["matched_gt"])
+        match_outputs_gt["output"][env,:,:,:] = torch.from_numpy(box_finetune)
+        match_outputs_gt["gt"][env,:,:,:] = torch.from_numpy(matched_gt)
     return model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt
 
 # change to TR3D
@@ -468,7 +522,7 @@ def combine_old_files(filenames, num_files):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        '--task_dataset', default='nav_sim/sim_data/',
+        '--task_dataset', default=taskpath,
         nargs='?', help='path to task dataset'
     )
     parser.add_argument(
@@ -490,6 +544,9 @@ if __name__ == '__main__':
     for task in task_dataset:
 
         # Initialize task
+        task.env= task.base_path.split('/')[-1]
+        task.base_path = f'{room_path}/{task.env}'
+        task.mesh_parent_folder = f'{pg_path}/nav_sim/sim_data/3D-FUTURE-model-tiny'
         task.goal_radius = 0.5
         task.observation = {}
         task.observation.type = 'rgb'  # 'rgb' or 'lidar'
@@ -516,10 +573,10 @@ if __name__ == '__main__':
 
     ##################################################################
     # Number of environments
-    num_envs = 10
+    num_envs = 400
 
     # Number of parallel threads
-    num_parallel = 2
+    num_parallel = 10
     ##################################################################
 
     # _, _, _ = render_env(seed=0)
@@ -530,6 +587,9 @@ if __name__ == '__main__':
     save_file = args.save_dataset
     save_res = []
     ##################################################################
+
+    # task_idx = 300
+    # run_env(task_dataset[task_idx])
 
     for task in task_dataset:
         env += 1 

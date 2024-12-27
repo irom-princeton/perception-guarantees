@@ -168,8 +168,8 @@ class VanillaEnv():
             )
 
             # Get Image
-            far = 1000.0
-            near = 0.01
+            far = 7.5 # 1000.0
+            near = 1 #0.01
             projection_matrix = self._p.computeProjectionMatrixFOV(
                 fov=rgb_cfg.fov, aspect=rgb_cfg.aspect, nearVal=near,
                 farVal=far
@@ -545,13 +545,13 @@ class VanillaEnv():
         """
         x, y, vx, vy = state
         ux, uy = action
-        # x_new = x + vx* self.dt
-        # y_new = y + vy * self.dt
-        # vx_new = vx-k1*self.dt*vx+k5*ux*self.dt -k4*vy*self.dt
-        # vy_new = vy-k2*self.dt*vy+k6*uy*self.dt -k3*vx*self.dt
+        x_new = x + vx* self.dt
+        y_new = y + vy * self.dt
+        vx_new = vx-k1*self.dt*vx+k5*ux*self.dt -k4*vy*self.dt
+        vy_new = vy-k2*self.dt*vy+k6*uy*self.dt -k3*vx*self.dt
         # print(vx_new, vy_new)
-        # state = np.array([x_new, y_new, vx_new, vy_new])
-        state = np.array([ux,uy,0,0])
+        state = np.array([x_new, y_new, vx_new, vy_new])
+        # state = np.array([ux,uy,0,0])
         yaw = 0#  np.pi/2
 
         # Update visual
