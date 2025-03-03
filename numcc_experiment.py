@@ -1,16 +1,13 @@
 from pathlib import Path
 import pickle
-import gc
 import matplotlib.pyplot as plt
-import time
-import plotly.express as px
 import plotly.graph_objects as go
+from scipy.spatial.distance import cdist
 from PIL import Image
-from scipy.ndimage import median_filter
+from scipy.ndimage import median_filter, binary_closing
 
 from planning.Occ_Planner import Safe_Planner
 from nav_sim.env.task_env_numcc_exp import TaskEnv
-from nav_sim.test.numcc_generate_calibration_confidence import loss_mask, is_chair_visible
 
 # numcc imports
 from numcc.src.engine.engine import prepare_data_udf
@@ -31,12 +28,11 @@ foldername = f'{base_path.parent}/data/perception-guarantees/room_1203_rot/'
 taskpath = f'{base_path.parent}/data/perception-guarantees/task_1203_rot.pkl'
 
 # load pre-sampled points
-Pset = pickle.load(open(f'{base_path}/planning/pre_compute/Pset-2k.pkl', 'rb'))
-reachable = pickle.load(open(f'{base_path}/planning/pre_compute/reachable-2k.pkl', 'rb'))
-
+Pset = pickle.load(open(f'{base_path}/planning/pre_compute/Pset-4k.pkl', 'rb'))
+reachable = pickle.load(open(f'{base_path}/planning/pre_compute/reachable-4k.pkl', 'rb'))
 # numcc args
 numcc_args = main_numcc.get_args_parser().parse_args(args=[])
-numcc_args.udf_threshold = 0.23 # 0.49
+numcc_args.udf_threshold = 1.91 #1.26 #1.34 #1.91 #0.24 #0.23 #0.49
 numcc_args.resume = f'{base_path}/numcc/pretrained/numcc_hypersim_550c.pth'
 numcc_args.use_hypersim = True
 numcc_args.run_vis = True
@@ -44,6 +40,8 @@ numcc_args.n_groups = 550
 numcc_args.blr = 5e-5
 numcc_args.save_pc = True
 numcc_args.device = torch.device('cuda')
+
+prefix = '0224'
 
 ######## LOAD NUMCC MODEL ############
 misc.init_distributed_mode(numcc_args)
@@ -61,8 +59,6 @@ misc.load_model(args=numcc_args, model_without_ddp=model_without_ddp, optimizer=
 
 model.eval()
 
-cp = 0
-
 def state_to_planner(state, sp):
     # convert robot state to planner coordinates
     return (np.array([[[0,-1,0,0],[1,0,0,0],[0,0,0,-1],[0,0,1,0]]])@np.array(state) + np.array([8/2,0,0,0])).squeeze()
@@ -72,7 +68,7 @@ def state_to_go1(state, sp):
     return np.array([y, -x+8/2, vy, -vx])
 
 def plan_env(task):
-    print("Env: ", str(task.env))
+    # print("Env: ", str(task.env))
     visualize = False
     filename = foldername + str(task.env) + '/numcc_' + str(numcc_args.udf_threshold)
     gt_data = np.load((foldername + str(task.env) + '/occupancy_grid.npz'), allow_pickle=True)
@@ -91,7 +87,8 @@ def plan_env(task):
                       n_samples=len(Pset),
                       Pset=Pset,
                       reachable=reachable,
-                      sensor_dt=0.2,)
+                      sensor_dt=0.5,
+                      verbose=False)
     planner_goal = state_to_planner(np.array([task.goal_loc[0], task.goal_loc[1],0.5,0]), sp)
     
     env.dt = sp.dt
@@ -113,6 +110,7 @@ def plan_env(task):
     while True and not done and not collided:
         state = state_to_planner(env._state, sp)
         # print('state: ', env._state)
+        # breakpoint()
 
         # DETECTION
         grid = get_map(observation, cam_position)
@@ -125,10 +123,13 @@ def plan_env(task):
         misdetected += count_misdetected(gt_grid, sp.world.map_design)
         time_misdetected += 1
 
-        if visualize and steps_taken % 10 == 0:
+        if visualize and steps_taken % 1 == 0:
             # plot grid and state with plotly
             fig = go.Figure()
-            fig.add_trace(go.Heatmap(z=sp.world.map_design-gt_grid))
+            free = np.zeros((83,83))
+            free[sp.world.map_design == 0.5] = 0.5
+            fig.add_trace(go.Heatmap(z=gt_grid*5+sp.world.map_design))
+            # fig.add_trace(go.Heatmap(z=sp.world.map_design))
             fig.add_trace(go.Scatter(x=[sp.world.state_to_pixel(state)[1]], y=[sp.world.state_to_pixel(state)[0]], mode='markers', marker=dict(size=10, color='red')))
             # plot plan in green
             if len(res['idx_solution']) > 1:
@@ -138,38 +139,62 @@ def plan_env(task):
                     x2, y2 = sp.world.state_to_pixel(x_waypoints[i+1])
                     fig.add_trace(go.Scatter(x=[y1, y2], y=[x1, x2], mode='lines', line=dict(color='green', width=2)))
             fig.show()
-
-        # plt.clf()
-        # fig = plt.imshow(sp.world.map_design+gt_grid*5, cmap='coolwarm')
-        # plt.scatter(sp.world.state_to_pixel(state)[1], sp.world.state_to_pixel(state)[0], color='red')
-        # plt.savefig(f'{steps_taken}_map.png')
-
         if len(res['idx_solution']) > 1 and not done and not collided:
             policy_before_trans = np.vstack(res['u_waypoints'])
             policy = (np.array([[0,1],[-1,0]])@policy_before_trans.T).T
             prev_policy = np.copy(policy)
-            for step in range(min(int(sp.sensor_dt/sp.dt), len(policy))):
-                idx_prev = step
-                state = env._state
-                state_traj.append(state_to_planner(state, sp))
-                # for obs in task.piece_bounds_all:
-                #     if state[0] < obs[3] and state[0] > obs[0]:
-                #        if state[1] < obs[4] and state[1] > obs[1]: 
-                # og_loc = [round(state[0]/0.1)+1 , round((state[1]+4)/0.1)+1]
-                og_loc = sp.world.state_to_pixel(state_traj[-1])
-                if gt_grid[og_loc[0], og_loc[1]]:
-                    print("Env: ", str(task.env), " Collision")
-                    collided = True
+            
+            # find steps to node
+            x_waypoints = np.vstack(res['x_waypoints'])
+
+            for i in range(min(int(sp.sensor_dt/sp.dt),len(x_waypoints)),len(x_waypoints)):
+                if min(cdist(np.array([x_waypoints[i]]), sp.Pset)[0]) < 0.2:
+                    node_step = i
                     break
-                action = policy[step]
-                observation, reward, done, info = env.step(action)
-                t += sp.dt
-                if done:
-                    print("Env: ", str(task.env), " Success!")
-                    break
-                elif collided:
-                    print("Env: ", str(task.env), " Collided")
-                    break
+            if np.linalg.norm(x_waypoints[-1] - planner_goal) > task.goal_radius:
+                # for step in range(min(int(sp.sensor_dt/sp.dt), len(policy), node_step)):
+                # for step in range(min(len(policy),len(res['u_waypoints'][0]))):
+                # for step in range(len(policy)):
+                # print("Replan step: ", min(node_step, len(policy)))
+                for step in range(min(node_step, len(policy))):
+                    idx_prev = step
+                    state = state_to_planner(env._state, sp)
+                    state_traj.append(state)
+
+                    og_loc = sp.world.state_to_pixel(state_traj[-1])
+                    if gt_grid[og_loc[0], og_loc[1]]:
+                        print("Env: ", str(task.env), " Collision")
+                        collided = True
+                        break
+                    action = policy[step]
+                    observation, reward, done, info = env.step(action)
+                    t += sp.dt
+                    if done:
+                        print("Env: ", str(task.env), " Success!")
+                        break
+                    elif collided:
+                        print("Env: ", str(task.env), " Collided")
+                        break
+            else: 
+                for step in range(min(node_step, len(policy))):
+                    idx_prev = step
+                    state = state_to_planner(env._state, sp)
+                    state_traj.append(state)
+
+                    og_loc = sp.world.state_to_pixel(state_traj[-1])
+                    if gt_grid[og_loc[0], og_loc[1]]:
+                        print("Env: ", str(task.env), " Collision")
+                        collided = True
+                        break
+                    action = policy[step]
+                    observation, reward, done, info = env.step(action)
+                    t += sp.dt
+                    if done:
+                        print("Env: ", str(task.env), " Success!")
+                        break
+                    elif collided:
+                        print("Env: ", str(task.env), " Collided")
+                        break
         else:
             plan_fail += 1
             if (len(prev_policy) > idx_prev+1): #int(sp.sensor_dt/sp.dt):
@@ -213,12 +238,25 @@ def create_gif(image_paths, output_gif_path, duration=500):
 
 def plot_results(filename, state_traj , ground_truth, sp):
     plt.clf()
-    plt.imshow(ground_truth*5 + sp.world.map_design, cmap='coolwarm')
+
+    pred_free = sp.world.map_design == 0.5
+    pred_occ = sp.world.map_design == 1
+    true_occ = ground_truth == 1
+
+    blue = np.array([142,186,217])/255.0
+    orange = np.array([255, 190, 134])/255.0
+
+    map_rgb = np.ones((83,83,3)).astype(float)
+    map_rgb[pred_free] = blue
+    map_rgb[pred_occ] = orange
+    map_rgb[true_occ] = 0 # black
+
+    plt.imshow(map_rgb)
     if len(state_traj) >0:
         for state in state_traj:
             x,y = sp.world.state_to_pixel(state)[1], sp.world.state_to_pixel(state)[0]
             plt.scatter(x, y, color='red', s=1)
-    plt.savefig(filename + 'traj_plot_2k_ssdt0.2_bl.png')
+    plt.savefig(filename + f'traj_plot_{prefix}.png')
 
 def initialize_task(task):
     task.goal_radius = 1.5
@@ -296,14 +334,14 @@ def get_map(pc, cam_position):
 
     if good_points.sum() != 0:
         # filter out ceiling and floor
-        mask = (pc_for_occ[:, 1] > -2 ) & (pc_for_occ[:, 1] < -0.5)
+        mask = (pc_for_occ[:, 1] > -2 ) & (pc_for_occ[:, 1] < -0.8)
         pc_for_occ = pc_for_occ[mask]
     # get rid of the middle dimension
     points_2d = pc_for_occ[:, [0, 2]] # right, forward
 
     # grid
     grid = np.zeros((83,83))
-    grid_pitch = 0.10 # from get_room_from_3dfront.py
+    grid_pitch = 8/82 # from get_room_from_3dfront.py
     min_x = -4
     min_y = 0
 
@@ -312,7 +350,12 @@ def get_map(pc, cam_position):
         indices = indices[(indices[:, 0] >= 0) & (indices[:, 0] < 83) & (indices[:, 1] >= 0) & (indices[:, 1] < 83)]
     grid[indices[:, 0], indices[:, 1]] = 1  # Mark as occupied
     grid = np.rot90(grid)
-    grid = median_filter(grid, size=2)
+
+    bc1 = binary_closing(grid, np.ones((4,1))).astype(int)
+    bc2 = binary_closing(grid, np.ones((1,4))).astype(int)
+    bc = np.logical_or(bc1, bc2).astype(int)
+    mf = median_filter(bc, size=2)
+    grid = np.logical_or(grid, mf).astype(float)
 
     return grid
 
@@ -355,8 +398,6 @@ def run_viz_udf(model, samples, device, args):
 
     total_n_passes = int(np.ceil(query_xyz.shape[1] / max_n_queries_fwd))
 
-    pred_points = np.empty((0,3))
-
     if args.distributed:
         for param in model.module.parameters():
             param.requires_grad = False
@@ -364,6 +405,7 @@ def run_viz_udf(model, samples, device, args):
         for param in model.parameters():
             param.requires_grad = False
    
+    all_pred_udf = []
     for p_idx in range(total_n_passes):        
         p_start = p_idx     * max_n_queries_fwd
         p_end = (p_idx + 1) * max_n_queries_fwd
@@ -388,16 +430,22 @@ def run_viz_udf(model, samples, device, args):
         pred_udf = F.relu(pred[:,:,:1]).reshape((-1, 1)) # nQ, 1
         pred_udf = torch.clamp(pred_udf, max=max_dist) 
 
-        # Candidate points
-        t = args.udf_threshold
-        pos = (pred_udf < t).squeeze(-1) # (nQ, )
-        points = cur_query_xyz.squeeze(0) # (nQ, 3)
-        points = points[pos].unsqueeze(0) # (1, n, 3)
-            
-        if torch.sum(pos) > 0:
-            # points = move_points(model, points, seen_points, valid_seen, fea, up_grid_fea, args, n_iter=args.udf_n_iter)
-            pts = points.detach().squeeze(0).cpu().numpy()
-            pred_points = np.append(pred_points, pts, axis = 0)
+        all_pred_udf.append(pred_udf)
+
+    # nonlinearly transform all udfs
+    all_pred_udf = torch.exp(torch.cat(all_pred_udf, dim=0).squeeze())
+
+    # Candidate points
+    t = args.udf_threshold
+    pos = (all_pred_udf < t).squeeze(-1) # (nQ, )
+    points = query_xyz.squeeze(0) # (nQ, 3)
+    points = points[pos].unsqueeze(0) # (1, n, 3)
+    
+    pred_points = np.empty((0,3))
+    if torch.sum(pos) > 0:
+        # points = move_points(model, points, seen_points, valid_seen, fea, up_grid_fea, args, n_iter=args.udf_n_iter)
+        pts = points.detach().squeeze(0).cpu().numpy()
+        pred_points = np.append(pred_points, pts, axis = 0)
         
         
     return pred_points, seen_xyz
@@ -419,10 +467,22 @@ def expand_pc(grid: np.ndarray,
     return grid_pad
 
 def count_misdetected(gt, pred):
-    x,y = np.where(pred == 0.5)
-    predicted_free = (x[(x != 82) & (x != 81) & (y != 82) & (y != 81)], 
-                      y[(x != 82) & (x != 81) & (y != 82) & (y != 81)])
-
+    # ignore walls
+    mask = np.zeros_like(gt)
+    mask[0:2, :] = 1
+    mask[:, 0:2] = 1
+    mask[-2:, :] = 1
+    mask[:, -2:] = 1
+    pix_loc = np.array([78,51]) # starting point
+    # ignore initial position
+    for i in range(-15, 16):
+        for j in range(-15, 16):
+            if (np.linalg.norm(np.array([i,j])) < 15 and 
+                pix_loc[0]+i >= 0 and pix_loc[0]+i < pred.shape[0] and 
+                pix_loc[1]+j >= 0 and pix_loc[1]+j < pred.shape[1]):
+                mask[pix_loc[0]+i, pix_loc[1]+j] = 1
+    # mask out pred
+    predicted_free = np.where((pred == 0.5) & (mask == 0))
     return np.sum(gt[predicted_free] == 1) > 0
 
 
@@ -438,10 +498,14 @@ if __name__ == "__main__":
 
     collisions = 0
     fails = 0
+
+    redo_envs = ['2', '69', '42', '38', '71', '44', '4', '96', '49', '78', '74', 
+                 '18', '65', '29', '24', '50', '22', '10', '73', '3', '56', '48', '88']
     for i in range(num_tasks-num_envs, num_tasks):
         task = task_dataset[i]
         task = initialize_task(task)
-        result = plan_env(task)
+        if task.env == '37':
+            result = plan_env(task)
 
-        file_batch = foldername+ str(task.env) + "/cp_" + str(cp) + "_numcc_ssdt0.2_bl.npz"
-        np.savez_compressed(file_batch, data=result)
+            file_batch = foldername+ str(task.env) + f"/numcc_{numcc_args.udf_threshold}_{prefix}.npz"
+            np.savez_compressed(file_batch, data=result)

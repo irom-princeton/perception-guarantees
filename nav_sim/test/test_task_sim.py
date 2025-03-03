@@ -67,7 +67,7 @@ device = torch.device("cuda")
 model.to(device)
 
 # Load the x,y points to sample
-with open('planning/pre_compute/Pset-1.5k.pkl', 'rb') as f:
+with open('planning/pre_compute/Pset-4k.pkl', 'rb') as f:
     samples = pickle.load(f)
     # Remove goal
     samples = samples[:-1][:]
@@ -123,6 +123,11 @@ def run_env(task):
         # Convert from camera frame to world frame
         is_visible.append(task.observation.is_visible[step])
     env.close_pb()
+
+    num_chairs = 5
+    if len(gt_obs) < num_chairs:
+        gt_obs = gt_obs + [np.zeros((2,3))]*(num_chairs-len(gt_obs))
+
     return {"box_axis_aligned": np.array(bbs), 
             "box_features": all_box_features,
             "bbox_labels": np.array(gt_obs), 
@@ -134,7 +139,7 @@ def run_env(task):
 def run_step(env, task, x, y, step, visualize=False):
     action  = [x[step],y[step]]
     observation, reward, done, info = env.step(action)
-    num_chairs = len(task.piece_bounds_all) # Number of chairs in the current environment
+    num_chairs = 5 #len(task.piece_bounds_all) # Number of chairs in the current environment
     num_boxes = 15 # Number of boxes we want to predict using 3DETR
 
     task.observation.camera_pos[step] = [float(env.lidar_pos[0]), float(env.lidar_pos[1]), float(env.lidar_pos[2])]
@@ -157,6 +162,9 @@ def run_step(env, task, x, y, step, visualize=False):
         is_vis = is_box_visible(X, task.piece_bounds_all, visualize)
         for obs_idx, obs in enumerate(task.piece_bounds_all):
             is_vis[obs_idx] = (is_vis[obs_idx] and task.observation.cam_not_inside_obs[step])
+
+    if len(is_vis) < num_chairs:
+        is_vis = is_vis + [False]*(num_chairs-len(is_vis))
     task.observation.is_visible[step] = is_vis
 
     if (len(observation[0])>0):
@@ -242,6 +250,11 @@ def get_box(pc_all, num_chairs, num_boxes):
     return corners, box_features
 
 def match_gt_output_boxes(output_boxes, ground_truth, is_visible):
+
+    num_chairs = 5
+    if len(ground_truth) < num_chairs:
+        ground_truth = np.concatenate((ground_truth, np.array([np.zeros((2,3))]*(num_chairs-len(ground_truth)))), axis=0)
+
     max_iou = torch.zeros(ground_truth.shape[0])
     center_diff = 100*torch.ones(ground_truth.shape[0])
     sorted_pred = np.copy(ground_truth)
@@ -328,8 +341,11 @@ def plot_box_pc(pc, output_boxes, gt_boxes, is_vis):
 
 def format_results(results):
     num_envs = len(results)
+    print("Number of environments: ", num_envs)
     num_cam_positions = results[0]["loss"].shape[0]
+    print("Number of camera positions: ", num_cam_positions)
     num_chairs = results[0]["loss"].shape[1]
+    print("Number of chairs: ", num_chairs)
     nqueries = results[0]["box_features"].shape[1]
     dec_dim = results[0]["box_features"].shape[2]
     num_pred = results[0]["box_finetune"].shape[1]
@@ -371,17 +387,8 @@ def combine_old_files(filenames, num_files):
         loss_mask = torch.cat((loss_mask, loss))
     return model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        '--task_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task_0803.pkl',
-        nargs='?', help='path to save the task files'
-    )
-    parser.add_argument(
-        '--save_dataset', default='/home/zm2074/Projects/data/perception-guarantees/calibrate_1.5k/',
-        nargs='?', help='path to save the task files'
-    )
-    args = parser.parse_args()
+# if __name__ == '__main__':
+def main(args):
 
     # Load task dataset
     with open(args.task_dataset, 'rb') as f:
@@ -439,6 +446,9 @@ if __name__ == '__main__':
     save_res = []
     ##################################################################
 
+    # debug
+    # run_env(task_dataset[env])
+
     for task in task_dataset:
         env += 1 
         print("Environment", str(env))
@@ -463,10 +473,28 @@ if __name__ == '__main__':
                 torch.save(loss_mask, args.save_dataset + "data/dataset_intermediate/loss_mask"+str(batch) + ".pt")
                 torch.save(match_outputs_gt, args.save_dataset + "data/dataset_intermediate/finetune"+str(batch) + ".pt")
     #################################################################
+    return
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--task_dataset', default='/home/zm2074/Projects/data/perception-guarantees/task_1210_rot.pkl',
+        nargs='?', help='path to save the task files'
+    )
+    parser.add_argument(
+        '--save_dataset', default='/home/zm2074/Projects/data/perception-guarantees/calibrate_4k_rot/',
+        nargs='?', help='path to save the task files'
+    )
+    args = parser.parse_args()
+
+    # Load task dataset
+    with open(args.task_dataset, 'rb') as f:
+        task_dataset = pickle.load(f)
+
+    num_parallel = 10
     # model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt = format_results(save_res)
     filenames = [args.save_dataset + "data/dataset_intermediate/features", args.save_dataset + "data/dataset_intermediate/bbox_labels", args.save_dataset + "data/dataset_intermediate/loss_mask", args.save_dataset + "data/dataset_intermediate/finetune"]
-    model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt = combine_old_files(filenames, int(len(task_dataset)/num_parallel))
+    model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt = combine_old_files(filenames, 30) #int(len(task_dataset)/num_parallel))
     ###########################################################################
     # # Save processed feature data
     torch.save(model_outputs_all, args.save_dataset + "data/features.pt")

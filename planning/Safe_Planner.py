@@ -13,10 +13,12 @@ from shapely.geometry import Point, MultiPolygon, Polygon, LineString, MultiPoin
 from shapely.ops import unary_union
 from shapely.geometry.polygon import orient
 from shapely import contains_xy
+from shapely import make_valid
 from planning.utils import turn_box, non_det_filter, filter_reachable
 
 # load model parameters
 [k1, k2, A, B, R, BRB] = pickle.load(open('planning/sp_var.pkl','rb'))
+# print('A:', A)
 expA = expm(A*10**3)
 
 class World:
@@ -181,7 +183,7 @@ class Safe_Planner:
         for i in np.linspace(0.5,self.world.w-0.5,num_horizontal):
             for j in np.linspace(0.5,self.world.h-0.5,num_vertical):
                 for k in np.linspace(min(self.vx_range),max(self.vx_range),num_speed):
-                    self.Pset.append([i,j,k,1.5]) # constant forward speed
+                    self.Pset.append([i,j,k,0.5]) # constant forward speed
         self.n_samples = len(self.Pset)
         self.Pset.append(self.goal)
 
@@ -327,7 +329,10 @@ class Safe_Planner:
             fov_v.append(Point([8,8]))
         fov_v += [world_intersect_right, Point(start[0:2])]
 
-        occlusion_space = occlusion_space.union(Polygon(fov_v))
+        try:
+            occlusion_space = occlusion_space.union(Polygon(fov_v))
+        except:
+            occlusion_space = occlusion_space.union(make_valid(Polygon(fov_v)))
 
         world_polygon = Polygon([[0,0],[8,0],[8,8],[0,8],[0,0]])
 
@@ -395,8 +400,9 @@ class Safe_Planner:
 
         # find nearest valid sampled node to current state
         start_idx_all = np.argsort(cdist(np.array(self.Pset),np.array(state)), axis=0)
-        valid_idx = np.where(self.bool_valid[start_idx_all])[0]
-        start_idx = start_idx_all[valid_idx[0]][0]
+        # valid_idx = np.where(self.bool_valid[start_idx_all])[0]
+        # start_idx = start_idx_all[valid_idx[0]][0]
+        start_idx = start_idx_all[0][0]
         self.goal_idx = self.n_samples
         self.bool_open[start_idx] = True
 
@@ -500,8 +506,10 @@ class Safe_Planner:
                 connect = False
             elif not self.world.isValid_multiple(x_waypoints):
                 connect = False
-            elif self.time_to_come[idx_parent] + time_new <= self.sensor_dt:
+            # elif self.time_to_come[idx_parent] + time_new <= self.sensor_dt:
+            else:
                 for x_waypoint in x_waypoints[0:int(np.floor(self.sensor_dt/self.dt))]:
+                    # print('check ICS')
                     if not self.world.isICSfree(x_waypoint):
                         connect = False
                         break

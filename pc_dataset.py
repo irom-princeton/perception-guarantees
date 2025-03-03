@@ -30,6 +30,7 @@ class PointCloudDataset(Dataset):
         num_locations = self.features["box_features"].shape[1]
         self.bbox_labels = torch.load(bbox_labels_file)
         sb = self.bbox_labels.shape
+        breakpoint()
         self.bbox_labels = self.bbox_labels.view((sb[0], 1, sb[1], sb[2], sb[3]))
         self.bbox_labels = self.bbox_labels.expand(-1, num_locations, -1, -1, -1)
 

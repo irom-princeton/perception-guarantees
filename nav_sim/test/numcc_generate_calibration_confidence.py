@@ -16,11 +16,15 @@ from nav_sim.env.task_env_numcc import TaskEnv
 
 import plotly.express as px
 from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 from scipy.ndimage import median_filter, binary_closing
 import torch
 import numpy as np
 import pickle
 import os
+import matplotlib.pyplot as plt
+from matplotlib import cm, colors
+
 from pathlib import Path
 pg_path = Path(__file__).parent.parent.parent
 data_path = pg_path.parent/'data/perception-guarantees'
@@ -41,7 +45,7 @@ def load_task(task_dataset, task_idx):
     task = initialize_task(task)
 
     # Load the states to calibrate
-    with open(pg_path/'planning/pre_compute/Pset-2k.pkl', 'rb') as f:
+    with open(pg_path/'planning/pre_compute/Pset-4k-1.5.pkl', 'rb') as f:
         state_samples = pickle.load(f)
         # Remove goal
         state_samples = state_samples[:-1][:]
@@ -99,6 +103,10 @@ def run_env(task, model, numcc_args):
     with np.load(occupancy_grid_path) as occupancy_grid:
         gt = occupancy_grid['arr_0'] 
     # rotate gt by 180 degrees
+    if gt.shape != (83, 83):
+        gt_grid = np.zeros((83, 83))
+        gt_grid[:min(83,gt_grid.shape[0]), :min(83,gt_grid.shape[1])] = gt[:min(83,gt_grid.shape[0]), :min(83,gt_grid.shape[1])]
+        gt = gt_grid
     gt = np.rot90(gt, 2)
 
     num_steps = len(task.x)
@@ -107,9 +115,8 @@ def run_env(task, model, numcc_args):
     bad_results = {}
 
     for step in range(num_steps):
-        if (step+1)%50 == 0:
-            print(f'Step {step+1}/{num_steps}')
-    # step = 13
+        # if (step+1)%50 == 0:
+        print(f'Step {step+1}/{num_steps}')
         x = task.x[step]
         y = task.y[step]
         task, observation = run_step(env, task, x, y, step)
@@ -117,16 +124,18 @@ def run_env(task, model, numcc_args):
         samples = process_observation(task, observation, cam_position = task.observation.camera_pos[step])
         all_pred_udf, query_xyz, seen_xyz = run_viz_udf(model, samples, numcc_args)
         # fig = visualize(pred_points, seen_xyz, cam_position = task.observation.camera_pos[step])
-        t, coverage = find_threshold(torch.cat(all_pred_udf, dim=0), query_xyz, seen_xyz, gt, task.observation.camera_pos[step], task.piece_bounds_all)
+        max_t_sofar = max(thresholds)
+        t, coverage = find_threshold(all_pred_udf, query_xyz, seen_xyz, gt, task.observation.camera_pos[step], task.piece_bounds_all, initial_guess = max(1.2, max_t_sofar))
+        print(f'Threshold: {t}, Max in Env: {max_t_sofar}')
         thresholds[step] = t
         coverages[step] = coverage
 
-        if t >= 0.5:
-            # plot_coverage(torch.cat(all_pred_udf, dim=0), query_xyz, seen_xyz, gt, task.observation.camera_pos[step], task.piece_bounds_all, t, step)
-            step_result = {'all_pred_udf': all_pred_udf, 'query_xyz': query_xyz, 'seen_xyz': seen_xyz, 'gt': gt, 'cam_position': task.observation.camera_pos[step]}
-            bad_results[step] = step_result
+    # if t >= 0.5:
+    #     # plot_coverage(torch.cat(all_pred_udf, dim=0), query_xyz, seen_xyz, gt, task.observation.camera_pos[step], task.piece_bounds_all, t, step)
+    #     step_result = {'all_pred_udf': all_pred_udf, 'query_xyz': query_xyz, 'seen_xyz': seen_xyz, 'gt': gt, 'cam_position': task.observation.camera_pos[step]}
+    #     bad_results[step] = step_result
 
-    env_results = {'thresholds': thresholds, 'coverages': coverages, 'task': task, 'bad_results': bad_results}
+    env_results = {'thresholds': thresholds, 'coverages': coverages, 'task': task} #, 'bad_results': bad_results}
     return env_results
 
 def run_step(env, task, x, y, step):
@@ -171,6 +180,27 @@ def process_observation(task, pc, cam_position):
 
     return samples
 
+def array_to_color_gradient(array, color_map='coolwarm'):
+    """
+    Converts a nx1 array into nx3 array representing a gradient color.
+
+    Parameters:
+        array (numpy.ndarray): The input nx1 array.
+        color_map (str): The name of the matplotlib colormap to use.
+
+    Returns:
+        numpy.ndarray: A nx3 array with each value converted to RGB.
+    """
+
+    # Normalize the array to a range between 0 and 1
+    norm = colors.Normalize(vmin=np.min(array), vmax=np.max(array), clip=True)
+    # Get the colormap
+    colormap = cm.get_cmap(color_map)
+    # Apply the colormap and return the RGB values
+    rgb_array = colormap(norm(array))[:, 0,:3]  # Take only the first 3 channels (R, G, B)
+
+    return rgb_array
+    
 def run_viz_udf(model, samples, args):
     seen_xyz, valid_seen_xyz, query_xyz, unseen_rgb, labels, seen_images, gt_fps_xyz, seen_xyz_hr, valid_seen_xyz_hr = prepare_data_udf(samples, args.device, is_train=False, is_viz=True, args=args)
     seen_images_no_preprocess = seen_images.clone()
@@ -242,12 +272,18 @@ def run_viz_udf(model, samples, args):
 
         pred_udf = F.relu(pred[:,:,:1]).reshape((-1, 1)) # nQ, 1
         pred_udf = torch.clamp(pred_udf, max=args.max_dist) 
+
+        # # nonlinearly scale the udf
+        # # pred_udf = torch.log(pred_udf * 10)
+        # pred_udf = nonlinear_transform([pred_udf])
+
+        # append to all_pred_udf
         all_pred_udf.append(pred_udf)
 
         debug = False
         if debug:
             # Candidate points
-            t = 0.6
+            t = 1.8
             pos = (pred_udf < t).squeeze(-1) # (nQ, )
             points = cur_query_xyz.squeeze(0) # (nQ, 3)
             points = points[pos].unsqueeze(0) # (1, n, 3)
@@ -271,13 +307,39 @@ def run_viz_udf(model, samples, args):
                 if len(cur_color_out.shape) == 1:
                     cur_color_out = cur_color_out[None,...]
                 pts = points.detach().squeeze(0).cpu().numpy()
+                udfs = pred_udf[pos].detach().cpu().numpy()
+                udf_colors = array_to_color_gradient(udfs, color_map='coolwarm')
                 pred_points = np.append(pred_points, pts, axis = 0)
-                pred_colors = np.append(pred_colors, cur_color_out, axis = 0)
+                pred_colors = np.append(pred_colors, udf_colors, axis = 0)
         
+    # nonlinearly scale the udf
+    all_pred_udf = torch.exp(torch.cat(all_pred_udf, dim=0).squeeze())
     if debug:
-        
+        # pred
+        points = pred_points
+        features = pred_colors
+        good_points = points[:, 0] != -100
+
+        if good_points.sum() != 0:
+            # filter out ceiling and floor
+            mask = (points[:, 1] > 0.3) & (points[:, 1] < 1) 
+            points = points[mask]
+            features = features[mask]
+
+        # project to 2D
+        points_2d = points.copy()
+        points_2d[:, 1] = 1.0
+
+        # plot top-down view
+        fig = plt.figure()
+        ax = fig.add_subplot(111)
+        ax.set_aspect('equal')
+        ax.scatter(points_2d[:, 0], points_2d[:, 2], c = features, s = 10, marker = 's')
+        fig.savefig(f'udf_{p_idx}.png')
+        # breakpoint()
+
         img = (seen_images_no_preprocess[0].permute(1, 2, 0) * 255).cpu().numpy().copy().astype(np.uint8)
-        with open('351_284_viz.html', 'a') as f:
+        with open('nonlinear_scale.html', 'a') as f:
             generate_html_udf(
                 img,
                 seen_xyz, seen_images_no_preprocess,
@@ -293,6 +355,9 @@ def run_viz_udf(model, samples, args):
                 fn_pc_seen = None,
                 fn_pc_gt=None
             )
+    # breakpoint()
+    # all_pred_udf = torch.cat(all_pred_udf, dim=0)
+
     return all_pred_udf, query_xyz, seen_xyz
 def is_chair_visible(seen_xyz, obstacles, cam_position, visualize=False):
     is_vis = [False]*len(obstacles)
@@ -366,6 +431,12 @@ def loss_mask(cam_position: np.ndarray, piece_bounds_all: list, is_viz: list, gt
             piece_mesh = np.array(piece_mesh).reshape(2, -1).T
             piece_mesh = piece_mesh[gt[piece_mesh[:,0], piece_mesh[:,1]]==1]
             mask_grid[piece_mesh[:,0], piece_mesh[:,1]] = 0
+
+    # ignore walls
+    mask_grid[0:2, :] = 0
+    mask_grid[:, 0:2] = 0
+    mask_grid[-2:, :] = 0
+    mask_grid[:, -2:] = 0
             
     true_grid = np.logical_and(mask_grid, gt).astype(int)
 
@@ -387,14 +458,14 @@ def plot_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_
     coverage = pred_grid - true_grid
 
 
-    fig = make_subplots(rows=1, cols=3, subplot_titles=(f'Threshold {np.round(t,2)}', 'Predicted Grid', 'True Grid'))
+    fig = make_subplots(rows=1, cols=3, subplot_titles=(f'Threshold {np.round(t,3)}', 'Predicted Grid', 'True Grid'))
 
     fig.add_trace(px.imshow(coverage).data[0], row=1, col=1)
     fig.add_trace(px.imshow(pred_grid).data[0], row=1, col=2)
     fig.add_trace(px.imshow(true_grid).data[0], row=1, col=3)
 
-    # fig.show()
-    fig.write_image(f'coverage_{np.round(t,2)}_step{step}.png')
+    fig.show()
+    # fig.write_image(f'coverage_{np.round(t,2)}_step{step}.png')
 
     return 
 
@@ -413,33 +484,38 @@ def find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_
     true_grid = loss_mask(cam_position, piece_bounds_all=piece_bounds_all, is_viz=is_viz, fov=60, gt=gt)
     coverage = pred_grid - true_grid
 
-    # fig = px.imshow(coverage, title=f'Threshold {np.round(t,2)}')
+    # fig = make_subplots(rows=1, cols=3, subplot_titles=(f'Threshold {np.round(t,3)}', 'Predicted Grid', 'True Grid'))
+
+    # fig.add_trace(px.imshow(coverage).data[0], row=1, col=1)
+    # fig.add_trace(px.imshow(pred_grid).data[0], row=1, col=2)
+    # fig.add_trace(px.imshow(true_grid+gt).data[0], row=1, col=3)
+
     # fig.show()
 
     # fig.write_image(f'coverage_{np.round(t,2)}.png')
 
     return coverage
 
-def find_threshold(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, piece_bounds_all):
+def find_threshold(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, piece_bounds_all, initial_guess=1.2):
     def loss(coverage):
         coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_bounds_all)
         if np.all(coverage >= 0):
             return 0
         return 1
     # find minimum t such that loss(t) = 0
-    t = 0.23 # initial guess
+    t = initial_guess
     coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_bounds_all)
 
-    while loss(coverage) != 0 and t < 1:
-        t += 0.002
+    while loss(coverage) != 0 and t < 2:
+        t += 0.01
         coverage = find_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_bounds_all)
 
-        # print(t)
+    # plot_coverage(pred_udf, cur_query_xyz, seen_xyz, gt, cam_position, t, piece_bounds_all)
     return t, coverage
 
 
 
-def visualize(pred_points, seen_xyz, cam_position, ceiling = -2, floor = -0.5):
+def visualize(pred_points, seen_xyz, cam_position, ceiling = -2, floor = -0.8):
     cam_position_numcc = np.array([-cam_position[1], -cam_position[2], cam_position[0]])
     pred_points = pred_points + cam_position_numcc # back to sim frame
     seen_points = seen_xyz.squeeze(0).cpu().numpy().reshape(-1, 3) + cam_position_numcc
@@ -514,15 +590,16 @@ def main():
     ## load task
     task_dataset = pg_path.parent/'data/perception-guarantees/task_1210_rot.pkl'
 
-    # for task_idx in range(162,400):
-    task_idx = 351
-    print(f'Running task {task_idx}')
-    task = load_task(task_dataset, task_idx)
-
-    env_results = run_env(task, model, numcc_args)
+    for task_idx in range(268,400):
+    # task_idx = 0
     
-        # with open(data_path /'task_numcc'/f'task_0803_{task_idx}.pkl', 'wb') as f:
-        #     pickle.dump(env_results, f)
+        print(f'Running task {task_idx}')
+        task = load_task(task_dataset, task_idx)
+
+        env_results = run_env(task, model, numcc_args)
+
+        with open(data_path /'task_numcc'/f'task_1210_{task_idx}.pkl', 'wb') as f:
+            pickle.dump(env_results, f)
     
 
     return 

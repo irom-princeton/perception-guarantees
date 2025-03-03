@@ -162,3 +162,10 @@ def gen_trajectory(s0, s1, tau, dt):
     u_waypoints = (np.linalg.inv(R)@B.T@waypoints[4:,:]).T
 
     return x_waypoints[::-1], u_waypoints[::-1]
+
+def show_trajectory(ax, s0, s1, tau, dt, c_='gray', linewidth_=0.5):
+    x_waypoints,_ = gen_trajectory(s0, s1, tau, dt)
+    M = np.zeros((4, int(np.abs(np.ceil(tau/dt)))))
+    for i in range(len(x_waypoints)):
+        M[:, i] = x_waypoints[i]
+    ax.plot(M[0, :], M[1, :], c=c_, linewidth=linewidth_)

@@ -101,7 +101,7 @@ class TaskEnv(VanillaEnv):
                 baseOrientation=self._p.getQuaternionFromEuler([0, 0, 0])
             )
             self._obs_id_all += [obj_id]
-        print('load wall')
+        # print('load wall')
         # Load furniture
         for piece_id, piece_pos in zip(task.piece_id_all, task.piece_pos_all):
 
@@ -127,7 +127,7 @@ class TaskEnv(VanillaEnv):
                 ])
             )
             self._obs_id_all += [obj_id]
-        print('load furniture')
+        # print('load furniture')
         # Render goal location if render
         if self.render:
             if "_goal_id" in vars(self).keys():

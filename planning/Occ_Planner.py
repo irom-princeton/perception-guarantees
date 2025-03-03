@@ -8,6 +8,10 @@ from scipy.spatial.distance import cdist
 from scipy.linalg import expm
 from scipy.stats import rankdata
 from pathlib import Path
+import plotly.graph_objects as go
+from scipy.ndimage import median_filter, binary_closing
+from planning.utils import show_trajectory
+import matplotlib.pyplot as plt
 
 import pickle
 
@@ -52,7 +56,7 @@ class World():
             # convert to grid frame
             camera_pose = np.array([8-camera_pose[0], 4-camera_pose[1]])
             # convert campera pose to index
-            camera_pose = (camera_pose/0.1).astype(int)
+            camera_pose = (camera_pose*83/8).astype(int)
 
             for i in range(mask_grid.shape[0]):
                 for j in range(mask_grid.shape[1]):
@@ -68,7 +72,7 @@ class World():
             return mask_grid
         
         # fov mask
-        mask_grid = 1 - loss_mask(self.state_to_pixel(state))
+        mask_grid = 1 - loss_mask(state)
 
         # take intersection of occupied cells within fov 
         intersect_obs = np.logical_and(self.map_design==1, new_grid==1).astype(float)
@@ -85,16 +89,17 @@ class World():
         new_map[mask_grid==0] = new_map_outside_fov[mask_grid==0]
         new_map[free_cells] = 0.5
         self.map_design = new_map
-
+        
         if self.counter == 0:
             self.map_design = new_grid
-            # add a square of free space around the observer
-            state_grid = self.state_to_pixel(state)
+            # add a circle of free space around the observer
+            pix_loc = self.state_to_pixel(state)
             for i in range(-15, 16):
                 for j in range(-15, 16):
-                    if np.sqrt(i**2+j**2)<=15 and state_grid[0]+i>=0 and state_grid[0]+i<self.map_size[0] and state_grid[1]+j>=0 and state_grid[1]+j<self.map_size[1]:
-                            self.map_design[state_grid[0]+i, state_grid[1]+j] = 0.5
-                        
+                    if (np.linalg.norm(np.array([i,j])) < 15 and 
+                        pix_loc[0]+i >= 0 and pix_loc[0]+i < self.map_size[0] and 
+                        pix_loc[1]+j >= 0 and pix_loc[1]+j < self.map_size[1]):
+                        self.map_design[pix_loc[0]+i, pix_loc[1]+j] = 0.5
             self.counter += 1
             return self
         
@@ -155,7 +160,14 @@ class World():
         for (x,y) in visible_cells:
             pred_occ[x][y] = 0.5
         
+        pred_free = np.zeros_like(pred_occ)
+        pred_free[np.where(pred_occ == 0.5)] = 1
+        pred_free_close = binary_closing(pred_free, np.ones((2,2)))
+        pred_free = np.logical_or(pred_free, pred_free_close)
+        
         # pred_occ = median_filter(pred_occ, size=2) # apply filter to cover random holes
+        # pred_occ = binary_closing(pred_occ, 0.5*np.ones((3,3))).astype(float)
+        pred_occ[np.where(pred_free == 1)] = 0.5
         self.map_design = pred_occ
         # construct obstacle tree
         obstacles = np.argwhere(pred_occ != 0.5)
@@ -277,6 +289,7 @@ class Safe_Planner():
         seed: int = 0,
         Pset: np.ndarray = None,
         reachable: np.ndarray = None,
+        verbose=False
     ):
         """
         Fast Marching Tree Path Planner 
@@ -317,6 +330,8 @@ class Safe_Planner():
         '''Load pre-computed reachable sets'''
         self.Pset = Pset
         self.reachable = reachable
+
+        self.verbose = verbose
         
     def goal_inter(self, start_id: int) -> np.ndarray:
         '''Returns best intermediate goal to explore'''
@@ -379,7 +394,7 @@ class Safe_Planner():
                 if dist_to_go <= 1.5: #goal radius
                     dist_to_go = 0
                 # append
-                costs.append(cost_to_come + 10*dist_to_go/v)
+                costs.append(cost_to_come + 10*dist_to_go/v) # weight = 10
 
         if all(np.isinf(costs)):
             return None
@@ -438,6 +453,8 @@ class Safe_Planner():
                 "u_waypoints": [[0,0]],
             }
         start_id = start_idx_all[start_valid_idx[0]][0]
+        if self.verbose:
+            print(f"Start node is {start_id}")
         # goal doesn't have to be valid
         goal_id = np.argmin(cdist(np.array(self.Pset),np.array([goal])), axis=0)[0]
         self.init_goal_id = goal_id
@@ -447,23 +464,28 @@ class Safe_Planner():
         z, goal_flag = self.build_tree(start_id, goal_id)
         self.goal_explored = []
         if goal_flag == 1: # path found
-            # print("Path found")
+            if self.verbose:
+                print("Path found")
             idx_solution = [x for x in nx.shortest_path(self.graph, start_id, z)]
         else: # no plan, explore intermediate goals
             while goal_flag == 0:
                 goal_loc = self.goal_inter(start_id)
+                if self.verbose:
+                    print(f"Exploring intermediate goal {self.goal_id}")
 
                 if goal_loc is None or self.goal_id == goal_id:
                     goal_flag = -1
                     idx_solution = [self.goal_id]
-                    # print("No path found")
+                    if self.verbose:
+                        print("No path found")
                     break
                 else:
                     if self.goal_id not in self.V_unvisited:
                         idx_solution = [x for x in nx.shortest_path(self.graph, start_id, self.goal_id)]
                         goal_flag = 1
-                        # print(f"Intermediate path found from {start_id} to {self.goal_id}")
-                        break # why doens't break?
+                        if self.verbose:
+                            print(f"Intermediate path found from {start_id} to {self.goal_id}")
+                        break 
 
         
         # output controls
@@ -480,6 +502,7 @@ class Safe_Planner():
             "idx_solution": idx_solution,
             "x_waypoints": x_waypoints,
             "u_waypoints": u_waypoints,
+            "goal_flag": goal_flag
         }
 
     def build_tree(self, start_id: int, goal_id: int) -> None:
@@ -489,7 +512,7 @@ class Safe_Planner():
         Args:
             start_id (int): Start node id
         """
-         # initialize
+        # initialize
         goal_flag = 0
         z = start_id
         self.V_open = pqdict({z: 0.})
@@ -519,13 +542,15 @@ class Safe_Planner():
                 connect = True
                 if not self.world.check_collision(self.node_list[y_min],None) or not self.world.check_collision(self.node_list[x],None):
                     connect = False
-                elif self.time_to_come[y_min] + time_new <= self.sensor_dt:
+                elif not self.world.check_collision_trajectory(x_waypoints): # with dynamics
+                    connect = False
+                else:
                     for x_waypoint in x_waypoints[0:int(np.floor(self.sensor_dt/self.dt))]:
                         if not self.world.check_ICS(x_waypoint):
+                            if self.verbose:
+                                print(f"ICS collision at {x_waypoint}")
                             connect = False
                             break
-                elif not self.world.check_collision_trajectory(x_waypoints): # with dynamics
-                        connect = False
                     
                                 
                 if connect:
@@ -545,11 +570,34 @@ class Safe_Planner():
             self.V_open.pop(z)
             V_closed.append(z)
             if len(self.V_open) == 0:
-                # print("Search failed")
+                if self.verbose:
+                    print("Search failed")
                 break
             z = self.V_open.top()
         return z, goal_flag
 
-
+    def show_connection(self, idx_solution):
+        '''Plot connected tree, solution, and world'''
+        plt.imshow(self.world.map_design)
+        for i in range(self.n_samples):
+            if i % 5 == 0:
+                plt.scatter(self.world.state_to_pixel(self.Pset[i])[0], 
+                            self.world.state_to_pixel(self.Pset[i])[1], 
+                            s=0.5, color='k', marker='.')
+        # show graph connections
+        for i in range(len(self.Pset)):
+            connections = nx.node_connected_component(self.graph, i)
+            for j in connections:
+                if i != j:
+                    plt.plot([self.world.state_to_pixel(self.Pset[i])[1], 
+                            self.world.state_to_pixel(self.Pset[j])[1]], 
+                            [self.world.state_to_pixel(self.Pset[i])[0], 
+                            self.world.state_to_pixel(self.Pset[j])[0]], 'k-', linewidth=0.1)
+        # for i in range(len(idx_solution) - 1):
+        #     s0 = idx_solution[i] #idx
+        #     s1 = idx_solution[i + 1] #idx
+        #     Ginv = self.reachable[s1][2][3][self.reachable[s1][2][0].index(s0)]
+        #     show_trajectory(plt, self.Pset[s0], self.Pset[s1], Ginv, self.time[s1], self.dt, c_='red', linewidth_=1)
+        plt.show()
 
         

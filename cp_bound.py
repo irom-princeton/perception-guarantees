@@ -30,8 +30,9 @@ def diff_conditional_success(epsilon_hat, desired_success_prob, N, delta):
 
 def main_numcc():
 	folder_path = data_path/'perception-guarantees/task_numcc'
-	losses = pickle.load(open(base_path/'thresholds_4.pkl', 'rb'))
-	# losses = []
+	# losses = pickle.load(open(base_path/'thresholds_4.pkl', 'rb'))
+	losses = []
+	losses_avg = []
 
 	# still_bad = pickle.load(open(base_path/'still_bad_results.pkl', 'rb'))
 	# still_bad_ts = pickle.load(open(base_path/'still_bad_ts.pkl', 'rb'))
@@ -69,14 +70,17 @@ def main_numcc():
 
 		# losses.append(delta)
 
-	
+	for task_idx in range(300):
+		data = pickle.load(open(folder_path/f'task_1210_{task_idx}.pkl', 'rb'))
+		losses.append(np.max(data['thresholds']))
+		losses_avg.append(np.mean(data['thresholds']))
 
 	
 	# plot histogram of losses
 	fig = go.Figure(data=[go.Histogram(x=losses)])
 	fig.show()
 
-	desired_epsilon = 0.12
+	desired_epsilon = 0.15
 	desired_success_prob = 1-desired_epsilon
 	delta = 0.01
 	N = len(losses)
@@ -85,7 +89,9 @@ def main_numcc():
 
 	q_level = np.ceil((N+1)*(1-epsilon_hat))/N
 	qhat = np.quantile(losses, q_level, method = 'higher')
+	qhat_avg = np.quantile(losses_avg, q_level, method = 'higher')
 	print(f'qhat: {qhat}')
+	print(f'qhat_avg: {qhat_avg}')
 	return qhat
 	
 
@@ -104,7 +110,7 @@ def main_box(raw_args=None):
 
 	###################################################################
 	# Initialize dataset and dataloader
-	dataset = PointCloudDataset("/media/zm2074/Data Drive/data/perception-guarantees/calibrate_1.5k/data/features.pt", "/media/zm2074/Data Drive/data/perception-guarantees/calibrate_1.5k/data/bbox_labels.pt", "/media/zm2074/Data Drive/data/perception-guarantees/calibrate_1.5k/data/loss_mask.pt")
+	dataset = PointCloudDataset("/home/zm2074/Projects/data/perception-guarantees/calibrate_4k_rot/data/features.pt", "/home/zm2074/Projects/data/perception-guarantees/calibrate_4k_rot/data/bbox_labels.pt", "/home/zm2074/Projects/data/perception-guarantees/calibrate_4k_rot/data/loss_mask.pt")
 	dataloader_cp = DataLoader(dataset, batch_size=len(dataset))
 	###################################################################
 
@@ -165,7 +171,7 @@ def main_box(raw_args=None):
 
 
 
-		ipy.embed()
+		# ipy.embed()
 		scaling_cp = scale_prediction(boxes_3detr, boxes_gt, loss_mask, 0.887) #for coverage of 0.85 w.p. 0.99 
 		average_cp = scale_prediction_average(boxes_3detr, boxes_gt, loss_mask, 0.887)
 		print('CP quantile prediction', scaling_cp)
@@ -175,5 +181,6 @@ def main_box(raw_args=None):
 # Run with command line arguments precisely when called directly
 # (rather than when imported)
 if __name__ == '__main__':
-	main_numcc() 
+	# main_numcc() 
+	main_box()
 

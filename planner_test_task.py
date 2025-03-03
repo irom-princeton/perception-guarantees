@@ -33,9 +33,11 @@ except RuntimeError:
 
 from models.model_perception import MLPModelDet
 
-f = open('planning/pre_compute/reachable-2k.pkl', 'rb')
+prefix = '0218'
+
+f = open('planning/pre_compute/reachable-4k.pkl', 'rb')
 reachable = pickle.load(f)
-f = open('planning/pre_compute/Pset-2k.pkl', 'rb')
+f = open('planning/pre_compute/Pset-4k.pkl', 'rb')
 Pset = pickle.load(f)
 dt = 0.1
 print("dt=", dt)
@@ -84,7 +86,8 @@ robot_radius = 0.3
 # cp = 0.6249 # 500 samples
 # cp = 0.7086 # 1k samples
 # cp = 0.6910 # 1.5k samples
-cp = 0.7441 # 2k samples
+# cp = 0.7441 # 2k samples
+cp = 1.1 # 4k samples
 is_finetune=False
 if is_finetune:
     cp=0.65 # 85% PwC
@@ -141,14 +144,14 @@ def plan_env(task):
     grid_data = np.load((foldername + str(task.env) + '/occupancy_grid.npz'), allow_pickle=True)
     occupancy_grid = grid_data['arr_0']
     N, M = occupancy_grid.shape
-    env = TaskEnv(render=visualize)
+    env = TaskEnv(render=False)
     # init_state = [1,-3,-np.pi/2]
     task.init_state = [0.2,-1,0,0]
     task.goal_loc = [7, -2]
     # task.init_state = [float(v) for v in init_state]
     # task.goal_loc = [float(v) for v in goal_loc]
     planner_init_state = [5,0.2,0,0]
-    sp = Safe_Planner(init_state=planner_init_state, FoV=60*np.pi/180, n_samples=len(Pset)-1,dt=dt,radius = 0.1, sensor_dt=0.2, max_search_iter=2000)
+    sp = Safe_Planner(init_state=planner_init_state, FoV=60*np.pi/180, n_samples=len(Pset)-1,dt=dt,radius = 0.1, sensor_dt=0.5, max_search_iter=2000)
     sp.load_reachable(Pset, reachable)
     env.dt = sp.dt
     env.reset(task)
@@ -169,8 +172,8 @@ def plan_env(task):
 
     while True and not done and not collided:
         state = state_to_planner(env._state, sp)
-        # print(state)
-        boxes = get_box(observation, visualize)
+        # print('state:',state)
+        boxes = get_box(observation, False)
         # print(boxes)
         boxes[:,0,:] -= cp
         boxes[:,1,:] += cp
@@ -207,7 +210,17 @@ def plan_env(task):
             policy_before_trans = np.vstack(res[2])
             policy = (np.array([[0,1],[-1,0]])@policy_before_trans.T).T
             prev_policy = np.copy(policy)
-            for step in range(min(int(sp.sensor_dt/sp.dt), len(policy))):
+
+            # find steps to node
+            x_waypoints = np.vstack(res[1])
+
+            for i in range(min(int(sp.sensor_dt/sp.dt),len(x_waypoints)),len(x_waypoints)):
+                if min(cdist(np.array([x_waypoints[i]]), sp.Pset)[0]) < 0.2:
+                    node_step = i
+                    break
+
+            # for step in range(min(int(sp.sensor_dt/sp.dt), len(policy))):
+            for step in range(min(node_step, len(policy))):
                 idx_prev = step
                 state = env._state
                 state_traj.append(state_to_planner(state, sp))
@@ -258,12 +271,12 @@ def plot_results(filename, state_traj , ground_truth, sp):
     plt.gca().set_aspect('equal', adjustable='box')
     if len(state_traj) >0:
         state_tf = np.squeeze(np.array(state_traj)).T
-        print('state tf', state_tf.shape)
+        # print('state tf', state_tf.shape)
         if state_tf.shape == (4,):
             state_tf = state_tf.reshape((4,1))
         ax.plot(state_tf[0, :], state_tf[1, :], c='r', linewidth=1, label='state')
     plt.legend()
-    plt.savefig(filename + 'traj_plot_2k.png')
+    plt.savefig(filename + f'traj_plot_4k_{prefix}.png')
     # plt.show()
 
 def get_box(observation_, visualize = False):
@@ -484,7 +497,7 @@ if __name__ == '__main__':
         # save_tasks += [task]
         env += 1 
         if env%batch_size == 0:
-            # if env > 0: # In case code stops running, change starting environment to last batch saved
+            if env > 0: # In case code stops running, change starting environment to last batch saved
                 batch = math.floor(env/batch_size)
                 print("Saving batch", str(batch))
                 t_start = time.time()
@@ -496,7 +509,11 @@ if __name__ == '__main__':
                 ii = 0
                 for result in results.get():
                     # Save data
-                    file_batch = foldername+ str(env-batch_size+ii) + "/cp_" + str(cp) + "_2k.npz"
+                    file_batch = f'{foldername}{task_dataset[env-batch_size+ii].env}/cp_{cp}_4k_{prefix}.npz'
                     np.savez_compressed(file_batch, data=result)
                     ii+=1
-        # result = plan_env(task)
+
+    # for i in range(100):
+    #     # print("Env: ", task_dataset[i].env)
+    #     if task_dataset[i].env in ['13']:
+    #         result = plan_env(task_dataset[i])
