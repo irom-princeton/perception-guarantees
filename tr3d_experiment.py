@@ -114,7 +114,7 @@ weights = f"{pg_path}/models/tr3d_1xb16_scannet-3d-18class.pth" # TR3D pretraine
 
 # Initialize inferencer
 inferencer = LidarDet3DInferencer(model=model, weights=weights)
-cp=0
+cp=1.85
 
 f = open(pg_path/'planning/pre_compute/reachable-2k.pkl', 'rb')
 reachable = pickle.load(f)
@@ -199,16 +199,42 @@ def plan_env(task):
 
     while True and not done and not collided:
         state = state_to_planner(env._state, sp)
-        boxes = get_box(observation, inferencer, conf_threshold=0,num_boxes= 15, show_viz=False)
+
+        ##### Simplify and filter point cloud #####
+        # Filter points with z < 0.1, z > 2.9 and abs(y) > 3.9 and x < 0.05, x > 7.95 and farther than 5m from the camera
+        mask_prediction_nofloor = (observation[:,2]<2.9)&(observation[:,2]>0.05)&(np.abs(observation[:,1])<3.9)&(observation[:,0]>0.05)&(observation[:,0]<7.95)
+        mask_prediction_floor = (observation[:,2]<2.9)&(observation[:,2]>0.0)&(np.abs(observation[:,1])<3.9)&(observation[:,0]>0.05)&(observation[:,0]<7.95)
+        mask_visible = ((observation[:,2]<2.9)&
+                        (observation[:,2]>0.05)&
+                        (np.abs(observation[:,1])<3.9)&
+                        (observation[:,0]>0.05)&
+                        (observation[:,0]<7.95)&
+                        (observation[:,0]<env._state[0]+5)&
+                        (observation[:,0]>env._state[0]+1)&
+                        # within 70 degrees
+                        (np.arctan2(observation[:,1]-env._state[1], observation[:,0]-env._state[0])<np.pi*35/180)&
+                        (np.arctan2(observation[:,1]-env._state[1], observation[:,0]-env._state[0])>-np.pi*35/180))
+        X_nofloor = observation[mask_prediction_nofloor]
+        X_floor = observation[mask_prediction_floor]
+        Y = observation[mask_visible]
+    
+        X_nofloor = np.array(X_nofloor)
+        X_floor = np.array(X_floor)
+        Y = np.array(Y)
+        num_boxes = 10
+
+        if len(X_nofloor) > 0:
+            output_floor = get_box(X_floor, inferencer, conf_threshold=0,num_boxes= np.ceil(num_boxes/2).astype(int), show_viz=False)
+            output_nofloor = get_box(X_nofloor, inferencer, conf_threshold=0,num_boxes= np.floor(num_boxes/2).astype(int), show_viz=False)
+            boxes = np.concatenate((output_floor, output_nofloor), axis=0)
+        else:
+            boxes = get_room_size_box(num_boxes)
+
         boxes[:,0,:] -= cp
         boxes[:,1,:] += cp
         boxes = boxes_to_planner_frame(boxes, sp)
         ###########################################################################
-        mask = (observation[:,2]<2.9)&(observation[:,2]>0.1)&(np.abs(observation[:,1])<3.9)&(observation[:,0]>0.05)# &(observation[:,0]<7.95)
-        X = observation[mask]
-        X = np.transpose(np.array(X))
-        
-        misdetected += count_misdetection(boxes, ground_truth, X, task.piece_bounds_all)
+        misdetected += count_misdetection(boxes, ground_truth, Y.T, task.piece_bounds_all)
         # print("Misdetected: ", misdetected)
         time_misdetected+=1
         ###########################################################################
@@ -216,10 +242,10 @@ def plan_env(task):
         st = time.time()
         res = sp.plan(state, boxes)
         t+=(time.time() - st)
-        if (steps_taken % 10) == 0 and visualize:
+        # if (steps_taken % 10) == 0: # and visualize:
             # sp.show_connection(res[0]) 
             # sp.world.show(true_boxes=ground_truth)
-            sp.show(res[0], true_boxes=np.array(ground_truth))
+            # sp.show(res[0], true_boxes=np.array(ground_truth), state=state)
         steps_taken+=1
         if len(res[0]) > 1 and not done and not collided:
             policy_before_trans = np.vstack(res[2])
@@ -277,14 +303,7 @@ def plot_results(filename, state_traj , ground_truth, sp):
 
 
 # change to TR3D
-def get_box(observation_, inferencer, show_viz=False, conf_threshold=0, num_boxes = 15, detect_objects = [2,3,10]):
-    mask = (observation_[:,2]<2.9)&(observation_[:,2]>0.1)&(np.abs(observation_[:,1])<3.9)&(observation_[:,0]>0.05)# &(observation[:,0]<7.95)
-    X = observation_[mask]
-    # X = np.transpose(np.array(X))
-    # observation = observation_.copy()
-    # observation = observation.T
-    observation = np.array(X)
-
+def get_box(observation, inferencer, show_viz=False, conf_threshold=0, num_boxes = 15, detect_objects = [2,3,10]):
     inputs_all = {'inputs': {'points': observation}, 'pred_score_thr': conf_threshold, 'out_dir': '', 'show': False, 'wait_time': -1, 'no_save_vis': True, 'no_save_pred': False, 'print_result': False}
     inferencer.show_progress = False
     results = inferencer(**inputs_all)
@@ -333,13 +352,14 @@ def plot_box_pc(pc_plot, output_boxes, gt_boxes, is_vis):
 
     # Visualize
     fig = go.Figure()
-
+    rgb_values = (pc_plot[:, 3:]).astype(int)  # Convert to 0-255 range
+    colors = [f"rgb({r},{g},{b})" for r, g, b in rgb_values]
     fig.add_trace(go.Scatter3d(
         x=pc_plot[:,0], 
         y=pc_plot[:,1], 
         z=pc_plot[:,2],
         mode='markers',
-        marker=dict(size=1)
+        marker=dict(size=1, color=colors)
     ))
 
     for jj, cc in enumerate(output_boxes):
@@ -359,6 +379,10 @@ def plot_box_pc(pc_plot, output_boxes, gt_boxes, is_vis):
                     line=dict(color='red')
                 ))
     for jj, cc in enumerate(gt_boxes):
+        if is_vis[jj]:
+            color='green'
+        else:
+            color='blue'
         r0 = [cc[0, 0], cc[1, 0]]
         r1 = [cc[0, 1], cc[1, 1]]
         r2 = [cc[0, 2], cc[1, 2]]
@@ -372,14 +396,19 @@ def plot_box_pc(pc_plot, output_boxes, gt_boxes, is_vis):
                     y=[s[1], e[1]], 
                     z=[s[2], e[2]],
                     mode='lines',
-                    line=dict(color='green')
+                    line=dict(color=color)
                 ))
 
     fig.update_layout(scene=dict(
         xaxis_title='X',
         yaxis_title='Y',
-        zaxis_title='Z'
+        zaxis_title='Z',
+        aspectratio=dict(x=1, y=1, z=1),
+        xaxis=dict(range=[-0.2, 8.2]),  # x-axis limits
+        yaxis=dict(range=[-4.2, 4.2]), # y-axis limits
+        zaxis=dict(range=[-0.2, 8.2])  # z-axis limits
     ))
+
     fig.show()
 
 def initialize_task(task):
@@ -439,13 +468,18 @@ if __name__ == '__main__':
     save_res = []
     ##################################################################
 
+    # debug
+    # task_id = 25
+    # plan_env(task_dataset[task_id])
+
+
     collisions = 0
     failed = 0
     for task in task_dataset:
         # save_tasks += [task]
         task_id += 1 
         if task_id%batch_size == 0:
-            # if env > 0: # In case code stops running, change starting environment to last batch saved
+            if task_id > 19: # In case code stops running, change starting environment to last batch saved
                 batch = math.floor(task_id/batch_size)
                 print("Saving batch", str(batch))
                 t_start = time.time()

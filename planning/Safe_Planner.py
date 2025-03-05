@@ -341,7 +341,7 @@ class Safe_Planner:
 
         return world_polygon.difference(occlusion_space)
 
-    def show(self,idx_solution, true_boxes = None):
+    def show(self,idx_solution, true_boxes=None, state=None):
         '''Plot solution'''
         fig, ax = self.world.show(true_boxes)
         for i in range(len(idx_solution)-1):
@@ -350,6 +350,8 @@ class Safe_Planner:
             x_waypoints = self.reachable[s0][1][3][self.reachable[s0][1][0].index(s1)][0]
             ax.plot(x_waypoints[:,0], x_waypoints[:,1], c='red', linewidth=1)
         ax.plot(self.Pset[self.goal_idx][0],self.Pset[self.goal_idx][1],'o')
+        if state is not None:
+            ax.plot(state[0][0],state[0][1],'o')
         # plt.show()
         now = tm.localtime()
         plt.savefig('planning/solution_'+str(now.tm_hour)+'_'+str(now.tm_min)+'_'+str(now.tm_sec)+'.png')

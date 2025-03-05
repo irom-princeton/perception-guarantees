@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import IPython as ipy
 import math
+import plotly.graph_objects as go
 
 
 def box_loss_diff(
@@ -196,15 +197,18 @@ def scale_prediction(
     corners2_diff_mask = torch.mul(loss_mask, corners2_diff.amax(dim=3))
     corners1_diff_mask[loss_mask == 0] = -np.inf
     corners2_diff_mask[loss_mask == 0] = -np.inf
-    # ipy.embed()
-    breakpoint()
     corners1_diff_mask = corners1_diff_mask.amax(dim=2)
     corners2_diff_mask = corners2_diff_mask.amax(dim=2)
     delta_all = torch.maximum(corners1_diff_mask, corners2_diff_mask)
-
+    breakpoint()
     delta = delta_all.amax(dim=1)
     delta, indices = torch.sort(delta, dim=0, descending=False)
     idx = math.ceil((B+1)*(tol))-1
+    # make histogram
+    fig = go.Figure()
+    # set bin width = 0.1
+    fig.add_histogram(x=delta.cpu(), nbinsx=100)
+    fig.show()
     return delta[idx]
 
 

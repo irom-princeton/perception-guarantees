@@ -21,12 +21,13 @@ def is_box_visible(X, obstacles, visualize):
     noise = np.array(X.T)
     num_points=len(noise)
     for obs_idx, obs in enumerate(obstacles):
-        # Check if any visible points are in the ground truth boxes. If more than 100 points are inside the box, it is marked visible
+        # Check if any visible points are in the ground truth boxes. If more than 150 points are inside the box, it is marked visible
         if (num_points > 0):
             obs = np.array(obs)
             s=[(noise[:,i]>obs[i]+0.1) & (noise[:,i]<obs[3+i]-0.1) for i in range(3)]
             s=np.array(s)
-            is_vis_noise=bool(sum(s[0,:]&s[1,:]&s[2,:])>100)
+            is_vis_noise=bool(sum(s[0,:]&s[1,:]&s[2,:])>500)#(num_points/5))
+            # print('num_visible_points:',sum(s[0,:]&s[1,:]&s[2,:]))
         else: 
             is_vis_noise = False
         is_vis[obs_idx]  = is_vis_noise

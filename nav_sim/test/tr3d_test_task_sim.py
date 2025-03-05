@@ -227,17 +227,16 @@ def run_env(task):
 
     # Run
     gt_obs = [[[obs[0], obs[1], obs[2]],[obs[3], obs[4], obs[5]]] for obs in task.piece_bounds_all]
-    for step in range(num_steps):
-        # Execute action
-        task, bb, output, matched_gt = run_step(env, task, x, y, step, visualize)
-        camera_pos.append(task.observation.camera_pos[step])
-        cam_not_inside_obs.append(task.observation.cam_not_inside_obs[step])
-        bbs.append(bb)
-        outputs.append(output)
-        matched_gts.append(matched_gt)
-
-        # Convert from camera frame to world frame
-        is_visible.append(task.observation.is_visible[step])
+    # for step in range(num_steps):
+    step=64
+    # Execute action
+    task, bb, output, matched_gt = run_step(env, task, x, y, step, visualize)
+    camera_pos.append(task.observation.camera_pos[step])
+    cam_not_inside_obs.append(task.observation.cam_not_inside_obs[step])
+    bbs.append(bb)
+    outputs.append(output)
+    matched_gts.append(matched_gt)
+    is_visible.append(task.observation.is_visible[step])
 
     return {"box_axis_aligned": np.array(bbs), 
             "bbox_labels": np.array(gt_obs), 
@@ -263,13 +262,29 @@ def run_step(env, task, x, y, step, visualize=False):
     task.observation.cam_not_inside_obs[step] = all([True if any(obs) == 1 else False for obs in not_inside_xyz])
     is_vis = [False]*num_chairs
 
-    # Filter points with z < 0.1, z > 2.9 and abs(y) > 3.9 and x < 0.05, x > 7.95
-    mask = (observation[:,2]<2.9)&(observation[:,2]>0.1)&(np.abs(observation[:,1])<3.9)&(observation[:,0]>0.05)&(observation[:,0]<7.95)
-    X = observation[mask]
+    # Filter points with z < 0.1, z > 2.9 and abs(y) > 3.9 and x < 0.05, x > 7.95 and farther than 5m from the camera
+    mask_prediction_nofloor = (observation[:,2]<2.9)&(observation[:,2]>0.05)&(np.abs(observation[:,1])<3.9)&(observation[:,0]>0.05)&(observation[:,0]<7.95)
+    mask_prediction_floor = (observation[:,2]<2.9)&(observation[:,2]>0.0)&(np.abs(observation[:,1])<3.9)&(observation[:,0]>0.05)&(observation[:,0]<7.95)
+    mask_visible = ((observation[:,2]<2.9)&
+                    (observation[:,2]>0.05)&
+                    (np.abs(observation[:,1])<3.9)&
+                    (observation[:,0]>0.05)&
+                    (observation[:,0]<7.95)&
+                    (observation[:,0]<pos[0]+5)&
+                    (observation[:,0]>pos[0]+1)&
+                    # within 70 degrees
+                    (np.arctan2(observation[:,1]-pos[1], observation[:,0]-pos[0])<np.pi*35/180)&
+                    (np.arctan2(observation[:,1]-pos[1], observation[:,0]-pos[0])>-np.pi*35/180))
+    X_nofloor = observation[mask_prediction_nofloor]
+    X_floor = observation[mask_prediction_floor]
+    Y = observation[mask_visible]
+    # X = observation
     
-    X = np.transpose(np.array(X))
-    if(len(X[0]) > 0):
-        is_vis = is_box_visible(X, task.piece_bounds_all, visualize=False)
+    X_nofloor = np.transpose(np.array(X_nofloor))
+    X_floor = np.transpose(np.array(X_floor))
+    Y = np.transpose(np.array(Y))
+    if(len(Y[0]) > 0):
+        is_vis = is_box_visible(Y, task.piece_bounds_all, visualize=False)
         
         for obs_idx, obs in enumerate(task.piece_bounds_all):
             is_vis[obs_idx] = (is_vis[obs_idx] and task.observation.cam_not_inside_obs[step])
@@ -279,29 +294,36 @@ def run_step(env, task, x, y, step, visualize=False):
     visualize = True #sum(is_vis) >1
     
 
-    if (len(X[0])>0):
+    if (len(Y[0])>0):
         # Get bounding boxes
-        output = get_box(X, inferencer, conf_threshold=conf_threshold,num_boxes= num_boxes, show_viz=True)
+        output_floor = get_box(X_floor, inferencer, conf_threshold=conf_threshold,num_boxes= np.ceil(num_boxes/2).astype(int), show_viz=visualize)
+        output_nofloor = get_box(X_nofloor, inferencer, conf_threshold=conf_threshold,num_boxes= np.floor(num_boxes/2).astype(int), show_viz=visualize)
+        output = np.concatenate((output_floor, output_nofloor), axis=0)
         bb = match_gt_output_boxes(output, np.array(gt_obs), is_vis)
         matched_gt = match_output_gt_boxes(output, np.array(gt_obs), is_vis)
 
-        # plot bb and gt on a 2d plane using plotly
+        # breakpoint()
+        loss = scale_prediction(torch.tensor(bb), torch.tensor(gt_obs), torch.tensor(is_vis).reshape(1,5))
+        
+        # if loss > 1:
+            # plot bb and gt on a 2d plane using plotly
         if visualize:
-            plot_box_pc(X.T, bb, np.array(gt_obs), is_vis)
+            print("Loss: ", float(loss), "env:", task.env, "step: ", step)
+            plot_box_pc(X_nofloor.T, bb, np.array(gt_obs), is_vis)
+            breakpoint()
     else:
         # There are no returns from the LIDAR, object is not visible
         task.observation.is_visible[step] = [False]*num_chairs
         bb = get_room_size_box(num_chairs)
         output = get_room_size_box(num_boxes)
         matched_gt = match_output_gt_boxes(output, np.array(gt_obs), is_vis) 
-    breakpoint()
+    # breakpoint()
     return task, bb, output, matched_gt
 
 # change to TR3D
 def get_box(observation_, inferencer, show_viz=False, conf_threshold=0, num_boxes = 15, detect_objects = [2,3,10]):
     observation = observation_.copy()
     observation = observation.T
-
     inputs_all = {'inputs': {'points': observation}, 'pred_score_thr': conf_threshold, 'out_dir': '', 'show': False, 'wait_time': -1, 'no_save_vis': True, 'no_save_pred': False, 'print_result': False}
     inferencer.show_progress = False
     results = inferencer(**inputs_all)
@@ -397,13 +419,14 @@ def plot_box_pc(pc_plot, output_boxes, gt_boxes, is_vis):
 
     # Visualize
     fig = go.Figure()
-
+    rgb_values = (pc_plot[:, 3:]).astype(int)  # Convert to 0-255 range
+    colors = [f"rgb({r},{g},{b})" for r, g, b in rgb_values]
     fig.add_trace(go.Scatter3d(
         x=pc_plot[:,0], 
         y=pc_plot[:,1], 
         z=pc_plot[:,2],
         mode='markers',
-        marker=dict(size=1)
+        marker=dict(size=1, color=colors)
     ))
 
     for jj, cc in enumerate(output_boxes):
@@ -423,6 +446,10 @@ def plot_box_pc(pc_plot, output_boxes, gt_boxes, is_vis):
                     line=dict(color='red')
                 ))
     for jj, cc in enumerate(gt_boxes):
+        if is_vis[jj]:
+            color='green'
+        else:
+            color='blue'
         r0 = [cc[0, 0], cc[1, 0]]
         r1 = [cc[0, 1], cc[1, 1]]
         r2 = [cc[0, 2], cc[1, 2]]
@@ -436,7 +463,7 @@ def plot_box_pc(pc_plot, output_boxes, gt_boxes, is_vis):
                     y=[s[1], e[1]], 
                     z=[s[2], e[2]],
                     mode='lines',
-                    line=dict(color='green')
+                    line=dict(color=color)
                 ))
 
     fig.update_layout(scene=dict(
@@ -519,6 +546,42 @@ def combine_old_files(filenames, num_files):
         loss_mask = torch.cat((loss_mask, loss))
     return model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt
 
+def scale_prediction(
+    corners_pred: torch.Tensor,
+    corners_gt: torch.Tensor,
+    loss_mask: torch.Tensor
+):
+    """
+    Provides an estimate of how much to scale the predicted bounding box using conformal prediction
+    Input:
+        corners_pred: torch Tensor (num_pred, 2, 3). Predicted.
+        corners_gt: torch Tensor (num_chairs, 2, 3). Ground truth.
+        Assumes that all boxes are axis-aligned.
+        loss_mask: mask on loss (based on whether object is visible).
+    Returns:
+        The scaling factor (how much to increase or decrease the l, w, h of the BB prediction)
+    """
+
+    # 2D projection
+    corners_gt = corners_gt[:,:,0:2]
+    corners_pred = corners_pred[:,:,0:2]
+
+    # Ensure that corners of predicted bboxes satisfy basic constraints
+    corners1_pred = torch.min(corners_pred[:, 0, :][None,:], corners_pred[:, 1, :][None,:])
+    corners2_pred = torch.max(corners_pred[:, 0, :][None,:], corners_pred[:, 1, :][None,:])
+
+    # Calculate the scaling between predicted and ground truth boxes
+    corners1_diff = (corners1_pred - corners_gt[:,0,:][None,:])
+    corners2_diff = (corners_gt[:,1,:][None,:] - corners2_pred)
+    corners1_diff = torch.squeeze(corners1_diff,2)
+    corners2_diff = torch.squeeze(corners2_diff,2)
+    corners1_diff_mask = torch.mul(loss_mask,corners1_diff.amax(dim=2))
+    corners2_diff_mask = torch.mul(loss_mask, corners2_diff.amax(dim=2))
+    corners1_diff_mask[loss_mask == 0] = -np.inf
+    corners2_diff_mask[loss_mask == 0] = -np.inf
+
+    return max(torch.maximum(max(corners1_diff_mask), max(corners2_diff_mask)))
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -588,10 +651,10 @@ if __name__ == '__main__':
     save_res = []
     ##################################################################
 
-    # task_idx = 300
-    # run_env(task_dataset[task_idx])
+    task_idx = 40
+    run_env(task_dataset[task_idx])
 
-    for task in task_dataset:
+    for task_idx in range(num_envs):
         env += 1 
         if env%batch_size == 0:
             if env>0: # In case code stops running, change starting environment to last batch saved
@@ -617,7 +680,7 @@ if __name__ == '__main__':
 
     # model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt = format_results(save_res)
     filenames = [args.save_dataset + "data/dataset_intermediate/features", args.save_dataset + "data/dataset_intermediate/bbox_labels", args.save_dataset + "data/dataset_intermediate/loss_mask", args.save_dataset + "data/dataset_intermediate/finetune"]
-    model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt = combine_old_files(filenames, int(len(task_dataset)/num_parallel))
+    model_outputs_all, bboxes_ground_truth_aligned, loss_mask, match_outputs_gt = combine_old_files(filenames, int(num_envs/num_parallel))
     ###########################################################################
     # # Save processed feature data
     torch.save(model_outputs_all, args.save_dataset + "data/features.pt")
