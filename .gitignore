@@ -2,3 +2,9 @@
 *egg-info/
 *__pycache__/
 trained_models/
+
+*.pth
+*.html
+planning/plots/
+trash/
+planning/pre_compute/

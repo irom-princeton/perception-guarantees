@@ -34,6 +34,10 @@ class World:
     def update(self, new_boxes):
         '''Applies nondeterministic filter to update estimate of occupancy space'''
         new_occ_space = np.array(new_boxes)
+        self.old_occ_space = self.box_space
+        self.new_occ_space = unary_union(turn_box(new_boxes))
+        self.old_free_space = self.free_space
+
         if self.counter == 0: # initial update
             self.box_space = unary_union(turn_box(new_boxes))
             self.box_space = self.box_space.difference(self.free_space) # make sure starts within free space
@@ -83,19 +87,41 @@ class World:
 
         # colors for plotting
         blue = (31/255, 119/255,180/255, 0.5)
-        orange = (255/255, 127/255, 14/255, 0.5)
-        dark_orange = (255/255, 66/255, 15/255, 1)
+        # blue = (32/255,119/255,180/255, 1)
+        # orange = (255/255, 127/255, 14/255, 0.5)
+        orange = (106/255,168/255,79/255, 0.5) # green
+        dark_orange = (106/255,168/255,79/255, 1) # dark green
+        # dark_orange = (255/255, 66/255, 15/255, 1)
         
-        if self.occ_space.geom_type == 'Polygon':
-            self.occ_space = MultiPolygon([self.occ_space])
-        for geom in self.box_space.geoms:
-            xs, ys = geom.exterior.xy
-            ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
+        # if self.occ_space.geom_type == 'Polygon':
+        #     self.occ_space = MultiPolygon([self.occ_space])
+        # for geom in self.box_space.geoms:
+        #     xs, ys = geom.exterior.xy
+        #     ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
+        if self.old_occ_space is not None:
+            if self.old_occ_space.geom_type == 'Polygon':
+                self.old_occ_space = MultiPolygon([self.old_occ_space])
+            for geom in self.old_occ_space.geoms:
+                xs, ys = geom.exterior.xy
+                ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
+        if self.new_occ_space is not None:
+            if self.new_occ_space.geom_type == 'Polygon':
+                self.new_occ_space = MultiPolygon([self.new_occ_space])
+            for geom in self.new_occ_space.geoms:
+                xs, ys = geom.exterior.xy
+                ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
         if self.free_space is not None and self.free_space.geom_type == 'Polygon':
             xs, ys = self.free_space.exterior.xy
             ax.fill(xs,ys, edgecolor = 'k',fc=blue)
         elif self.free_space is not None and self.free_space.geom_type == 'MultiPolygon':
             for geom in self.free_space.geoms:
+                xs, ys = geom.exterior.xy
+                ax.fill(xs,ys, edgecolor = 'k',fc=blue)
+        if self.free_space_new is not None and self.free_space_new.geom_type == 'Polygon':
+            xs, ys = self.free_space_new.exterior.xy
+            ax.fill(xs,ys, edgecolor = 'k',fc=blue)
+        elif self.free_space_new is not None and self.free_space_new.geom_type == 'MultiPolygon':
+            for geom in self.free_space_new.geoms:
                 xs, ys = geom.exterior.xy
                 ax.fill(xs,ys, edgecolor = 'k',fc=blue)
         if true_boxes is not None:
@@ -341,12 +367,15 @@ class Safe_Planner:
     def show(self,idx_solution, true_boxes = None):
         '''Plot solution'''
         fig, ax = self.world.show(true_boxes)
-        for i in range(len(idx_solution)-1):
-            s0 = idx_solution[i] #idx
-            s1 = idx_solution[i+1] #idx
-            x_waypoints = self.reachable[s0][1][3][self.reachable[s0][1][0].index(s1)][0]
-            ax.plot(x_waypoints[:,0], x_waypoints[:,1], c='red', linewidth=1)
-        ax.plot(self.Pset[self.goal_idx][0],self.Pset[self.goal_idx][1],'o')
+        # for i in range(len(idx_solution)-1):
+        #     s0 = idx_solution[i] #idx
+        #     s1 = idx_solution[i+1] #idx
+        #     x_waypoints = self.reachable[s0][1][3][self.reachable[s0][1][0].index(s1)][0]
+        #     ax.plot(x_waypoints[:,0], x_waypoints[:,1], c='red', linewidth=1)
+        # ax.plot(self.Pset[self.goal_idx][0],self.Pset[self.goal_idx][1],'o')
+
+        # only show current location
+        ax.plot(self.Pset[idx_solution[0]][0],self.Pset[idx_solution[0]][1],'o')
         plt.show()
 
     # safety planning algorithm
