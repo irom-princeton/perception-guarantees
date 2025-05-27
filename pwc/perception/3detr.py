@@ -1,48 +1,14 @@
-import os
-import random
-import argparse
-import pickle
 import numpy as np
-import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
-import time
-# from multiprocessing import Pool
-import math
-import json
-
-from itertools import product, combinations
 import torch
-from torch.multiprocessing import Pool, Process, set_start_method
-try:
-    set_start_method('spawn')
-except RuntimeError:
-    pass
 
-from utils.clustering import is_box_visible, cluster
-from nav_sim.task_env import TaskEnv
-import sys
-sys.path.append('../utils')
-sys.path.append('../datasets')
-from utils.pc_util import preprocess_point_cloud, pc_cam_to_3detr, random_sampling
-import warnings
-warnings.filterwarnings("error")
-warnings.filterwarnings("ignore", category=DeprecationWarning)
+from pwc.perception.models import build_model
 
-import IPython as ipy
-from models import build_model
-from datasets.sunrgbd import SunrgbdDatasetConfig as dataset_config
+from pwc.utils.pc_util import preprocess_point_cloud, pc_to_axis_aligned_rep, pc_cam_to_3detr
+from pwc.utils.box_util import box2d_iou
+from pwc.utils.clustering import is_box_visible
+from pwc.utils.make_args import make_args_parser
 
-from utils.pc_util import preprocess_point_cloud, read_ply, pc_to_axis_aligned_rep, pc_cam_to_3detr, is_inside_camera_fov
-from utils.box_util import box2d_iou
-from utils.make_args import make_args_parser
-
-from perception_model import PerceptionModel
-
-# camera + 3DETR
-
-
-
-
+from pwc.perception.perception_model import PerceptionModel
 
 
 class Perception3DETR(PerceptionModel):

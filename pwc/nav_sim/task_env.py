@@ -9,7 +9,7 @@ import numpy as np
 import pybullet as pb
 from pybullet_utils import bullet_client as bc
 
-from vanilla_env import VanillaEnv
+from pwc.nav_sim.vanilla_env import VanillaEnv
 
 
 class TaskEnv(VanillaEnv):
