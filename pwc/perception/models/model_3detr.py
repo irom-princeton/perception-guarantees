@@ -1,18 +1,17 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import math
 from functools import partial
-import IPython as ipy
 
 import numpy as np
 import torch
 import torch.nn as nn
 from third_party.pointnet2.pointnet2_modules import PointnetSAModuleVotes
 from third_party.pointnet2.pointnet2_utils import furthest_point_sample
-from utils.pc_util import scale_points, shift_scale_points
+from pwc.utils.pc_util import scale_points, shift_scale_points
 
-from models.helpers import GenericMLP
-from models.position_embedding import PositionEmbeddingCoordsSine
-from models.transformer import (MaskedTransformerEncoder, TransformerDecoder,
+from pwc.perception.models.helpers import GenericMLP
+from pwc.perception.models.position_embedding import PositionEmbeddingCoordsSine
+from pwc.perception.models.transformer import (MaskedTransformerEncoder, TransformerDecoder,
                                 TransformerDecoderLayer, TransformerEncoder,
                                 TransformerEncoderLayer)
 

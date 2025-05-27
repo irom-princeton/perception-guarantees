@@ -1,0 +1,71 @@
+perception: 
+  _target_: pwc.perception.3detr.Perception3DETR
+  config:
+    visualize: False
+    num_pc_points: 40000
+    num_chairs: 5
+    num_boxes: 15
+    room_thresholds:
+      xmin: 0.05
+      xmax: 7.95
+      ymin: -3.9
+      ymax: 3.9
+      zmin: 0.1
+      zmax: 2.9
+
+nav_sim:
+  _target_: pwc.nav_sim.task_env.TaskEnv
+  render: False
+  config:
+    mode: calibration
+    room:
+      room_dim: 8
+      wall_thickness: 0.1
+      wall_height: 4
+      ground_rgba: [0.8, 0.8, 0.8, 1.0]
+      wall_rgba: [0.9, 0.9, 0.9, 1.0]
+    robot:
+      half_dim: [0.323, 0.14, 0.2] 
+      lidar_height: 0.15
+      camera_thickness: 0.04
+    dynamics:
+      params_path: pwc/planning/sp_var.pkl
+      dt: 2
+
+    
+#TODO 
+calibration_config:
+  method: pwc
+  calibration_dataset_base_path: /media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/
+  epsilon: 0.15
+  delta: 0.01
+
+#TODO
+experiment_config:
+  name: pwc-3detr
+  description: PWC calibration with 3DETR model
+  output_dir: outputs/pwc-3detr
+  visualize: False
+  num_pc_points: 40000
+  init_state: [0,-3.5,0,0]
+  goal_loc: [7.5,3.5]
+
+planning:
+  _target_: pwc.planning.safe_planner.SafePlanner
+  world_box: [[0, 0], [8, 8]]
+  vx_range: [-0.5, 0.5]        # velocity ranges
+  vy_range: [0, 4]
+  sr: 1.0                      # initial clearance
+  init_state: [4, 1, 0, 0.5]   # initial state [x, y, vx, vy]
+  goal_f: [7, -2, 0.5, 0]      # goal location with forrestal coordinates
+  dt: 0.1                      # time resolution for controls
+  sensor_dt: 1                 # time resolution for perception update
+  r: 3                         # cost threshold for reachability
+  radius: 0.5                  # radius for finding intermediate goals
+  FoV: 60                      # field of view (in degrees)
+  FoV_range: 5                 # can't see beyond 5 meters
+  FoV_close: 1                 # can't see within 1 meter
+  n_samples: 2000
+  max_search_iter: 1000
+  weight: 10                   # weight for cost to go vs. cost to come
+  seed: 0

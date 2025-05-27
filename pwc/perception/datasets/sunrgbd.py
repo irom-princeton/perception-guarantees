@@ -25,10 +25,10 @@ import numpy as np
 from torch.utils.data import Dataset
 import scipy.io as sio  # to load .mat files for depth points
 
-import utils.pc_util as pc_util
-from utils.random_cuboid import RandomCuboid
-from utils.pc_util import shift_scale_points, scale_points
-from utils.box_util import (
+import pwc.utils.pc_util as pc_util
+from pwc.utils.random_cuboid import RandomCuboid
+from pwc.utils.pc_util import shift_scale_points, scale_points
+from pwc.utils.box_util import (
     flip_axis_to_camera_tensor,
     get_3d_box_batch_tensor,
     flip_axis_to_camera_np,

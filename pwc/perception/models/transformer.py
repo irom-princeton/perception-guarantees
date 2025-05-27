@@ -12,7 +12,7 @@ from typing import Optional
 import torch
 from torch import Tensor, nn
 
-from models.helpers import (ACTIVATION_DICT, NORM_DICT, WEIGHT_INIT_DICT,
+from pwc.perception.models.helpers import (ACTIVATION_DICT, NORM_DICT, WEIGHT_INIT_DICT,
                             get_clones)
 
 

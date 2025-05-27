@@ -16,7 +16,7 @@ from scipy.ndimage import median_filter
 from pathlib import Path
 
 
-from nav_sim.util.misc import rgba2rgb
+from pwc.utils.nav_sim_util import rgba2rgb
 
 # base path
 base_path: Path = Path(__file__).parent.parent.parent

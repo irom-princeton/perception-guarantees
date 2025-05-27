@@ -2,6 +2,7 @@ import numpy as np
 import torch
 
 from pwc.perception.models import build_model
+from pwc.perception.datasets.sunrgbd import SunrgbdDatasetConfig
 
 from pwc.utils.pc_util import preprocess_point_cloud, pc_to_axis_aligned_rep, pc_cam_to_3detr
 from pwc.utils.box_util import box2d_iou
@@ -27,7 +28,7 @@ class Perception3DETR(PerceptionModel):
 
     def load_model(self):
         # Dataset config: use SUNRGB-D
-        dataset_config = dataset_config()
+        dataset_config = SunrgbdDatasetConfig()
 
         # Parse default arguments
         parser = make_args_parser()

@@ -11,12 +11,12 @@ import sys
 
 import numpy as np
 import torch
-import utils.pc_util as pc_util
+import pwc.utils.pc_util as pc_util
 from torch.utils.data import Dataset
-from utils.box_util import (flip_axis_to_camera_np, flip_axis_to_camera_tensor,
+from pwc.utils.box_util import (flip_axis_to_camera_np, flip_axis_to_camera_tensor,
                             get_3d_box_batch_np, get_3d_box_batch_tensor)
-from utils.pc_util import scale_points, shift_scale_points
-from utils.random_cuboid import RandomCuboid
+from pwc.utils.pc_util import scale_points, shift_scale_points
+from pwc.utils.random_cuboid import RandomCuboid
 
 IGNORE_LABEL = -100
 MEAN_COLOR_RGB = np.array([109.8, 97.2, 83.8])

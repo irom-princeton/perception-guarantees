@@ -17,12 +17,13 @@ class TaskEnv(VanillaEnv):
     def __init__(
         self,
         render=False,
+        config=None,
     ):
         """
         Args:
             render (bool): whether to render the environment with PyBullet for GUI visulization
         """
-        super(TaskEnv, self).__init__(render=render)
+        super(TaskEnv, self).__init__(render=render, config=config)
 
     def init_pb(self):
         """

@@ -51,7 +51,7 @@ def make_args_parser():
 
     ##### Testing #####
     parser.add_argument("--test_only", default=True, action="store_true")
-    parser.add_argument("--test_ckpt", default="pretrained/sunrgbd_ep1080.pth", type=str)
+    parser.add_argument("--test_ckpt", default="pwc/perception/pretrained/sunrgbd_ep1080.pth", type=str)
 
 
     # ##### Number of points #####

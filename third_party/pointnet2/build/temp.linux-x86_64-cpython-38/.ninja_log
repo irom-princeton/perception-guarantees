@@ -1,0 +1,24 @@
+# ninja log v5
+1	10784	1684700796006093494	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/ball_query_gpu.o	787c1259c64b6753
+2	10793	1684700796018093359	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/interpolate_gpu.o	ecc78dafd1857fb1
+1	10853	1684700796074092727	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/group_points_gpu.o	6f84e5ad16a75127
+2	11098	1684700796318089973	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/sampling_gpu.o	8d1070b571ee21e3
+1	13521	1684700798726062874	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/bindings.o	dd867401df04756c
+0	15447	1684700800654041310	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/ball_query.o	6dec7ad1aad37a6d
+2	15467	1684700800682040997	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/sampling.o	f0bc507e2c7a6546
+2	15472	1684700800690040908	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/interpolate.o	7cce52117e36e456
+1	15493	1684700800706040730	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/group_points.o	b5b66d0920b215a5
+18	10521	1684701054019941346	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/group_points_gpu.o	e84744aad7adb6d6
+19	10539	1684701054039941228	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/interpolate_gpu.o	442448f227deac94
+17	10589	1684701054087940944	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/ball_query_gpu.o	8534ca1577f476c6
+19	10985	1684701054483938603	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/sampling_gpu.o	20adf6ee8faef10e
+18	13192	1684701056675925598	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/bindings.o	f86d0fdc86dc5721
+17	14972	1684701058455914964	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/ball_query.o	97fc60b27674cf9a
+18	15066	1684701058547914412	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/group_points.o	afc2e74507e828ae
+19	15122	1684701058603914076	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/sampling.o	6255cd3b8ab7f13e
+18	15187	1684701058671913669	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/interpolate.o	8150916eb76f8868
+21	19359	1685915533050916034	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/ball_query.o	97fc60b27674cf9a
+22	19480	1685915533174914042	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/interpolate.o	8150916eb76f8868
+22	19525	1685915533214913400	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/group_points.o	afc2e74507e828ae
+22	19662	1685915533354911151	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/sampling.o	6255cd3b8ab7f13e
+21	19723	1685915533414910187	/home/anushri/Documents/Projects/perception-guarantees-main/third_party/pointnet2/build/temp.linux-x86_64-cpython-38/_ext_src/src/bindings.o	f86d0fdc86dc5721
