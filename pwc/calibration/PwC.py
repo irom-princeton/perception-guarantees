@@ -72,7 +72,7 @@ class PwC(Calibration):
 #%%
 if __name__ == "__main__":
     pwc = PwC()
-    pwc.calibrate(calibration_dataset_base_path="/media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/",
+    pwc.calibrate(calibration_dataset_base_path="/media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_2k/data/",
                   epsilon=0.0,
                   delta=0.01)
 # %%

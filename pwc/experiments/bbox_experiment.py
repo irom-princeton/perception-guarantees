@@ -1,0 +1,158 @@
+import numpy as np
+import time
+from scipy.spatial.distance import cdist
+import matplotlib.pyplot as plt
+
+from pwc.experiments.base_experiment import BaseExperiment
+from pwc.utils.task_util import initialize_task
+
+class BBoxExperiment(BaseExperiment):
+    """
+    Experiment class for planning and navigating through environments using bounding boxes.
+    
+    Inherits from BaseExperiment.
+    """
+
+    def __init__(self, config):
+        super().__init__(config)
+
+    def run(self,
+            env,
+            perception_model,
+            planner,):
+        task_dataset = initialize_task(self.config.task)
+
+        for i in range(self.config.num_envs):
+            task = task_dataset[-i-1] # start from the back
+            results = self.plan_env(
+                task=task,
+                env=env,
+                perception_model=perception_model,
+                planner=planner,
+                experiment_config=self.config
+            )
+
+    def plan_env(self, task, env, perception_model, planner, experiment_config=None):
+        """
+        Plan and navigate through the environment using the perception model and planner.
+        
+        Args:
+            task: The task to be planned.
+            env: The environment in which the task is executed.
+            perception_model: The perception model used for planning.
+            planner: The planner used to generate plans.
+        """
+        # reset and initialize
+        env.reset(task=task)
+        planner.reset()
+        env.dt = planner.dt # match frequency
+
+        # initialize
+        t = 0
+        observation = env.step([0,0])[0] # initial observation
+        steps_taken = 0
+        state_traj = []
+        gt_obs = [[[obs[0], obs[1], obs[2]],[obs[3], obs[4], obs[5]]] for obs in task.piece_bounds_all]
+        # print("GT obstacles", gt_obs)
+        ground_truth = planner.world.boxes_to_planner_frame(np.array(gt_obs))
+        done = False
+        collided = False
+        misdetected = 0
+        time_misdetected = 0
+        prev_policy = []
+        idx_prev = 0
+        plan_fail = 0
+
+        while True and not done and not collided:
+            state = planner.world.state_to_planner(env._state)
+            # print('state:',state)
+            boxes = perception_model.get_box(observation, experiment_config)
+            # print(boxes)
+            boxes[:,0,:] -= experiment_config.cp
+            boxes[:,1,:] += experiment_config.cp
+            boxes = planner.world.boxes_to_planner_frame(boxes)
+            ###########################################################################
+            X = observation[:, (observation[2, :] >0.1)]
+            X = X[:, np.abs(X[1,:]) < 3.9]
+            X = X[:, X[0,:]>0.05]
+            X = X[:, X[0,:] < 7.95]
+            
+            X = np.tranplannerose(np.array(X))
+            misdetected += perception_model.count_misdetection(boxes, ground_truth, X, task.piece_bounds_all)
+            # print("Misdetected: ", misdetected)
+            time_misdetected+=1
+            ###########################################################################
+
+            st = time.time()
+            res = planner.plan(state, boxes)
+            t+=(time.time() - st)
+            if (steps_taken % 10) == 0 and experiment_config.visualize:
+                planner.show(res[0], true_boxes=np.array(ground_truth))
+            steps_taken+=1
+            if len(res[0]) > 1 and not done and not collided:
+                policy_before_trans = np.vstack(res[2])
+                policy = (np.array([[0,1],[-1,0]])@policy_before_trans.T).T
+                prev_policy = np.copy(policy)
+
+                # find steps to node
+                x_waypoints = np.vstack(res[1])
+
+                for i in range(min(int(planner.sensor_dt/planner.dt),len(x_waypoints)),len(x_waypoints)):
+                    if min(cdist(np.array([x_waypoints[i]]), planner.Pset)[0]) < 0.2:
+                        node_step = i
+                        break
+
+                for step in range(min(node_step, len(policy))):
+                    idx_prev = step
+                    state = env._state
+                    state_traj.append(planner.world.state_to_planner(state))
+                    for obs in task.piece_bounds_all:
+                        if state[0] < obs[3] and state[0] > obs[0]:
+                            if state[1] < obs[4] and state[1] > obs[1]: 
+                                og_loc = [round(state[0]/0.1)+1 , round((state[1]+4)/0.1)+1]
+                                print("Env: ", str(task.env), " Collision")
+                                collided = True
+                                break
+                    action = policy[step]
+                    observation, reward, done, info = env.step(action)
+                    t += planner.dt
+                    if done:
+                        print("Env: ", str(task.env), " Success!")
+                        break
+                    elif collided:
+                        print("Env: ", str(task.env), " Collided")
+                        break
+            else:
+                if (len(prev_policy) > idx_prev+1): 
+                    idx_prev += 1
+                    action = prev_policy[idx_prev]
+                    observation, reward, done, info = env.step(action)
+                    t += planner.dt
+                else:
+                    action = [0,0]
+                    observation, reward, done, info = env.step(action)
+                    t += planner.dt
+            if t > 140 or plan_fail > 10:
+                print("Env: ", str(task.env), " Failed")
+                break
+        filename = experiment_config.task.room_folder + str(task.env) + '/cp' + str(experiment_config.cp)
+        self.plot_results(filename, state_traj , ground_truth, planner)
+
+        return {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
+
+    def plot_results(filename, state_traj , ground_truth, sp):
+        fig, ax = sp.world.show(true_boxes=ground_truth)
+        plt.gca().set_aspect('equal', adjustable='box')
+        if len(state_traj) >0:
+            state_tf = np.squeeze(np.array(state_traj)).T
+            # print('state tf', state_tf.shape)
+            if state_tf.shape == (4,):
+                state_tf = state_tf.reshape((4,1))
+            ax.plot(state_tf[0, :], state_tf[1, :], c='r', linewidth=1, label='state')
+        plt.legend()
+        # plt.savefig(filename + f'traj_plot_4k_{prefix}.png')
+        plt.savefig('plot.png')
+        # plt.show()
+            
+        
+

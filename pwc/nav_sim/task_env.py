@@ -11,7 +11,6 @@ from pybullet_utils import bullet_client as bc
 
 from pwc.nav_sim.vanilla_env import VanillaEnv
 
-
 class TaskEnv(VanillaEnv):
 
     def __init__(

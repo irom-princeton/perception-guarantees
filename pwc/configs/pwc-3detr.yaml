@@ -34,21 +34,54 @@ nav_sim:
 
     
 #TODO 
-calibration_config:
-  method: pwc
+calibration:
+  _target_: pwc.calibration.PwC.PwC
+  name: PwC
   calibration_dataset_base_path: /media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/
   epsilon: 0.15
   delta: 0.01
 
-#TODO
-experiment_config:
-  name: pwc-3detr
-  description: PWC calibration with 3DETR model
-  output_dir: outputs/pwc-3detr
-  visualize: False
-  num_pc_points: 40000
-  init_state: [0,-3.5,0,0]
-  goal_loc: [7.5,3.5]
+experiment:
+  _target_: pwc.experiments.bbox_experiment.BBoxExperiment
+  config:
+    name: pwc-3detr
+    description: PWC calibration with 3DETR model
+    visualize: False
+    num_pc_points: 40000
+    init_state: [0,-3.5,0,0]
+    goal_loc: [7.5,3.5]
+    cp: 3.0259
+    is_finetune: False
+    num_envs: 100
+    num_parallel: 10
+    task: 
+      path: /home/zm2074/Projects/data/perception-guarantees/task_0803.pkl
+      room_folder: /home/zm2074/Projects/data/perception-guarantees/room_0803/
+      goal_radius: 1
+      observation:
+        type: rgbd
+        rgb:
+          x_offset_from_robot_front: 0.05  # no y offset
+          z_offset_from_robot_top: 0.05
+          tilt: 0  # degrees of tilting down towards the floor
+          img_w: 662
+          img_h: 376
+          aspect: 1.57
+          fov: 70  # in PyBullet, this is vertical field of view in degrees
+        depth:
+          img_w: 662
+          img_h: 376
+        lidar:
+          z_offset_from_robot_top: 0.01
+          horizontal_res: 1  # resolution, in degree,1
+          vertical_res: 1  # resolution, in degree , 1
+          vertical_fov: 30  # half in one direction, in degree
+          max_range: 5 # in meter Anushri changed from 5 to 8
+        camera_pos: {}
+        cam_not_inside_obs: {}
+        is_visible: {}
+
+
 
 planning:
   _target_: pwc.planning.safe_planner.SafePlanner
@@ -56,10 +89,10 @@ planning:
   vx_range: [-0.5, 0.5]        # velocity ranges
   vy_range: [0, 4]
   sr: 1.0                      # initial clearance
-  init_state: [4, 1, 0, 0.5]   # initial state [x, y, vx, vy]
+  init_state: [5, 0.2, 0, 0]   # initial state [x, y, vx, vy]
   goal_f: [7, -2, 0.5, 0]      # goal location with forrestal coordinates
   dt: 0.1                      # time resolution for controls
-  sensor_dt: 1                 # time resolution for perception update
+  sensor_dt: 0.5                 # time resolution for perception update
   r: 3                         # cost threshold for reachability
   radius: 0.5                  # radius for finding intermediate goals
   FoV: 60                      # field of view (in degrees)
@@ -69,3 +102,5 @@ planning:
   max_search_iter: 1000
   weight: 10                   # weight for cost to go vs. cost to come
   seed: 0
+  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset-4k.pkl
+  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable-4k.pkl

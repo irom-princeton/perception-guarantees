@@ -207,7 +207,7 @@ class VanillaEnv():
             return self._get_rgb()
         elif self.observation_type == 'lidar':
             return self._get_lidar()
-        elif self.observation_type == 'both':
+        elif self.observation_type == 'rgbd':
             rgb = self._get_rgb()
             # lidar = self._get_lidar()
             pc = self._get_point_cloud(depth, rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix)

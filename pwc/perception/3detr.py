@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
+from itertools import product, combinations
 
 from pwc.perception.models import build_model
 from pwc.perception.datasets.sunrgbd import SunrgbdDatasetConfig
@@ -50,6 +52,120 @@ class Perception3DETR(PerceptionModel):
         self.model = model
         return
     
+    def get_box(self,
+                observation_,
+                exp_config=None):
+        # Filter points with z < 0.01 and abs(y) > 3.5 and x> 0.01 and within a 1m distance of the robot
+        # axis transformed, so filter x,y same way
+        observation_ = observation_[:, observation_[2, :] < 2.9]
+
+        # ipy.embed()
+        observation = np.copy(observation_)
+        observation[1,:] = observation_[0,:]
+        observation[0,:] = -observation_[1,:]
+
+        if (len(observation[0])>0):
+            # Preprocess point cloud (random sampling of points), if there are any LIDAR returns
+            points_new = np.transpose(np.array(observation))
+            points = np.zeros((1,exp_config.num_pc_points, 3),dtype='float32')
+            points = preprocess_point_cloud(np.array(points_new), exp_config.num_pc_points)
+        else:
+            # There are no returns from the LIDAR, object is not visible
+            points = np.zeros((1,exp_config.num_pc_points, 3),dtype='float32')
+        
+        # Convert from camera frame to world frame
+        point_clouds = []
+        point_clouds.append(points)
+        
+        batch_size = 1
+        pc = np.array(point_clouds).astype('float32')
+        pc = pc.reshape((batch_size, exp_config.num_pc_points, 3))
+
+        pc_all = torch.from_numpy(pc).to(self.device)
+        pc_min_all = pc_all.min(1).values
+        pc_max_all = pc_all.max(1).values
+        inputs = {'point_clouds': pc_all, 'point_cloud_dims_min': pc_min_all, 'point_cloud_dims_max': pc_max_all}
+
+        outputs = self.model(inputs)
+        if exp_config.is_finetune:
+            box_features = outputs["box_features"].detach()
+            box_features_ = torch.reshape(box_features, (1,1,128,256))
+            model_cp = None #TODO: finetune model
+            finetune = model_cp(box_features_)
+        
+        bbox_pred_points = outputs['outputs']['box_corners'].detach().cpu()
+        obj_prob = outputs["outputs"]["objectness_prob"].clone().detach().cpu()
+        cls_prob = outputs["outputs"]["sem_cls_prob"].clone().detach().cpu()
+
+        chair_prob = cls_prob[:,:,3]
+        sort_box = torch.sort(obj_prob,1,descending=True)
+
+        # Visualize
+        if exp_config.visualize:
+            pc_plot = pc[:, pc[0,:,2] > 0.0,:]
+            plt.figure()
+            ax = plt.axes(projection='3d')
+            ax.scatter3D(
+                pc_plot[0,:,0], pc_plot[0,:,1],pc_plot[0,:,2]
+            )
+            ax.set_xlabel('X')
+            ax.set_ylabel('Y')
+            ax.set_zlabel('Z')
+            ax.set_aspect('auto')
+
+        num_probs = 0
+        num_boxes = 15
+        corners = []
+        if np.any(np.isnan(np.array(bbox_pred_points))):
+            return self.get_room_size_box(pc_all)
+        
+        for (sorted_idx,prob) in zip(list(sort_box[1][0,:]), list(sort_box[0][0,:])):
+            if (num_probs < num_boxes):
+                prob = prob.numpy()
+                bbox = bbox_pred_points[range(batch_size), sorted_idx, :, :]
+                cc = pc_to_axis_aligned_rep(bbox.numpy())
+                flag = False
+                if num_probs == 0:
+                    corners.append(cc)
+                    num_probs +=1
+                else:
+                    for cc_keep in corners:
+                        bb1 = (cc_keep[0,0,0],cc_keep[0,0,1],cc_keep[0,1,0],cc_keep[0,1,1])
+                        bb2 = (cc[0,0,0],cc[0,0,1],cc[0,1,0],cc[0,1,1])
+                        # Non-maximal supression, check if IoU more than some threshold to keep box
+                        if(box2d_iou(bb1,bb2) > 0.1):
+                            flag = True
+                    if not flag:    
+                        corners.append(cc)
+                        num_probs +=1
+
+                if exp_config.visualize:
+                    r0 = [cc[0,0, 0], cc[0,1, 0]]
+                    r1 = [cc[0,0, 1], cc[0,1, 1]]
+                    r2 = [cc[0,0, 2], cc[0,1, 2]]
+
+                    for s, e in combinations(np.array(list(product(r0, r1, r2))), 2):
+                        if (np.sum(np.abs(s-e)) == r0[1]-r0[0] or 
+                            np.sum(np.abs(s-e)) == r1[1]-r1[0] or 
+                            np.sum(np.abs(s-e)) == r2[1]-r2[0]):
+                            if (exp_config.visualize and not flag):
+                                ax.plot3D(*zip(s, e), color=(0.5+0.5*prob, 0.1,0.1))
+        
+        if exp_config.is_finetune:
+            finetuned_arr = finetune.cpu().detach().numpy()
+            finetuned_arr = np.squeeze(finetuned_arr)
+            # ipy.embed()
+            corners+=finetuned_arr
+        
+        boxes = np.zeros((len(corners),2,2))
+        for i in range(len(corners)):
+            # boxes[i,:,:] = corners[i][0,:,0:2]
+            boxes[i,:,0] = corners[i][0,:,1]
+            boxes[i,0,1] = -corners[i][0,1,0]
+            boxes[i,1,1] = -corners[i][0,0,0]
+
+        return boxes
+
     def run_step(self,
                  observation: torch.Tensor,
                  piece_bounds_all: list,
@@ -97,7 +213,6 @@ class Perception3DETR(PerceptionModel):
         
         return results
     
-
     def process_input(self, 
                       observation: torch.Tensor,):
         if (len(observation[0])>0):
@@ -115,7 +230,6 @@ class Perception3DETR(PerceptionModel):
             points = np.zeros((1,self.num_pc_points, 3),dtype='float32')
             pc_all = torch.from_numpy(points).to(self.device)
         return pc_all
-        
 
     def predict(self, 
                 pc_all: torch.Tensor):
@@ -230,3 +344,24 @@ class Perception3DETR(PerceptionModel):
                         center_diff[kk] = diff
                         sorted_pred[kk,:,:] = ground_truth[j,:,:]
         return sorted_pred
+    
+    def count_misdetection(self, pred_boxes, ground_truth, X, piece_bounds):
+        if(len(X) > 0):
+            is_vis = is_box_visible(X, piece_bounds, visualize=False)
+        else: 
+            is_vis = [False]*len(ground_truth)
+        num_is_vis = 0
+        misdetected = 0
+        for ii in range(len(ground_truth)):
+            detected = False
+            num_is_vis += 1 if is_vis[ii] == True else 0
+            for jj in range(len(pred_boxes)):
+                if is_vis[ii] and ((ground_truth[ii,0,0]>= pred_boxes[jj,0,0]) and (ground_truth[ii,0,1]>= pred_boxes[jj,0,1]) and (ground_truth[ii,1,0]<= pred_boxes[jj,1,0]) and (ground_truth[ii,1,1]<= pred_boxes[jj,1,1])):
+                    detected = True
+                    break
+            if is_vis[ii] and not detected:
+                misdetected+=1
+        if num_is_vis == 0:
+            return 0
+        else:
+            return (misdetected/num_is_vis)

@@ -130,6 +130,24 @@ class World:
 
         return fig, ax
     
+    #---------coordinate transformation functions---------
+    def state_to_planner(self, state):
+        # convert robot state to planner coordinates
+        return np.array([[[0,-1,0,0],[1,0,0,0],[0,0,0,-1],[0,0,1,0]]])@np.array(state) + np.array([self.w/2,0,0,0])
+    
+    def state_to_go1(self, state):
+        x, y, vx, vy = state[0]
+        return np.array([y, -x+self.w/2, vy, -vx])
+
+    def boxes_to_planner_frame(self, boxes):
+        boxes_new = np.zeros_like(boxes)
+        for i in range(len(boxes)):
+            #boxes_new[i,:,:] = np.reshape(np.array([[[0,0,0,-1],[1,0,0,0],[0,-1,0,0],[0,0,1,0]]])@np.reshape(boxes[0],(4,1)),(2,2)) + np.array([sp.world.w/2,0])
+            boxes_new[i,0,0] = -boxes[i,1,1] + self.w/2
+            boxes_new[i,1,0] = -boxes[i,0,1] + self.w/2
+            boxes_new[i,:,1] =  boxes[i,:,0]
+        return boxes_new
+    
 class SafePlanner:
     def __init__(self,
                  world_box: list = [[0,0],[8,8]], # world dimensions ([x_min, y_min], [x_max, y_max])
@@ -148,22 +166,20 @@ class SafePlanner:
                  n_samples = 2000,
                  max_search_iter = 1000,
                  weight = 10,  # weight for cost to go vs. cost to come
-                 seed = 0):
+                 seed = 0,
+                 Pset_path = None,
+                 reachable_path = None):
         
         # load inputs
         self.world_box = np.array(world_box)
+        self.world = World(self.world_box)
+        self.sr = sr
         self.vx_range = vx_range
         self.vy_range = vy_range
         self.init_state = init_state
-        self.world = World(world_box)
         self.goal_f = goal_f
         self.goal = self.state_to_planner(self.goal_f)
 
-        # starts within some free space
-        self.world.free_space = Polygon(((init_state[0]-sr, init_state[1]-sr),
-                                         (init_state[0]-sr, init_state[1]+sr),
-                                         (init_state[0]+sr, init_state[1]+sr),
-                                         (init_state[0]+sr, init_state[1]-sr)))
         self.dt = dt
         self.sensor_dt = sensor_dt
         self.r = r
@@ -176,15 +192,30 @@ class SafePlanner:
         self.weight = weight
         self.prng = np.random.RandomState(seed)
 
+        if Pset_path is not None and reachable_path is not None:
+            # load pre-computed reachable sets
+            self.load_reachable(Pset_path, reachable_path)
+
+        self.reset()
+
+    def reset(self):
+        
+        self.world = World(self.world_box)
+        # starts within some free space
+        self.world.free_space = Polygon(((self.init_state[0]-self.sr, self.init_state[1]-self.sr),
+                                         (self.init_state[0]-self.sr, self.init_state[1]+self.sr),
+                                         (self.init_state[0]+self.sr, self.init_state[1]+self.sr),
+                                         (self.init_state[0]+self.sr, self.init_state[1]-self.sr)))
+
         # initialize
-        self.cost = np.zeros(n_samples+1)
-        self.time = np.zeros(n_samples+1)
-        self.time_to_come = np.zeros(n_samples+1)
-        self.parent = np.arange(0,n_samples+1,1, dtype=int)
-        self.bool_unvisit = np.ones(n_samples+1, dtype=bool)
-        self.bool_closed = np.zeros(n_samples+1, dtype=bool)
-        self.bool_open = np.zeros(n_samples+1, dtype=bool)
-        self.bool_valid = np.ones(n_samples+1, dtype=bool)
+        self.cost = np.zeros(self.n_samples+1)
+        self.time = np.zeros(self.n_samples+1)
+        self.time_to_come = np.zeros(self.n_samples+1)
+        self.parent = np.arange(0,self.n_samples+1,1, dtype=int)
+        self.bool_unvisit = np.ones(self.n_samples+1, dtype=bool)
+        self.bool_closed = np.zeros(self.n_samples+1, dtype=bool)
+        self.bool_open = np.zeros(self.n_samples+1, dtype=bool)
+        self.bool_valid = np.ones(self.n_samples+1, dtype=bool)
         self.itr = 0
 
     def state_to_planner(self, state):
@@ -227,10 +258,11 @@ class SafePlanner:
         self.reachable = ray.get(futures)
         ray.shutdown()
 
-    def load_reachable(self, Pset, reachable):
+    def load_reachable(self, Pset_path, reachable_path):
         '''Load pre-computed reachable sets'''
-        self.Pset = Pset
-        self.reachable = reachable
+        self.Pset = pickle.load(open(Pset_path,'rb'))
+        self.reachable = pickle.load(open(reachable_path,'rb'))
+        self.num_samples = len(self.Pset)-1
         # self.point_objects = MultiPoint(np.array(self.Pset)[:,0:2])
 
     def goal_inter(self, start_idx):
