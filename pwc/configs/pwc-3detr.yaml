@@ -45,21 +45,23 @@ experiment:
   _target_: pwc.experiments.bbox_experiment.BBoxExperiment
   config:
     name: pwc-3detr
+    save_tag: 0601
     description: PWC calibration with 3DETR model
     visualize: False
     num_pc_points: 40000
-    init_state: [0,-3.5,0,0]
-    goal_loc: [7.5,3.5]
+    init_state: [0.2,-1,0,0]
+    goal_loc: [7,-2]
+    goal_loc_planner_frame: [6,7]
     cp: 3.0259
     is_finetune: False
     num_envs: 100
     num_parallel: 10
     task: 
-      path: /home/zm2074/Projects/data/perception-guarantees/task_0803.pkl
-      room_folder: /home/zm2074/Projects/data/perception-guarantees/room_0803/
+      path: /home/zm2074/Projects/data/perception-guarantees/task_multiple.pkl
+      room_folder: /home/zm2074/Projects/data/perception-guarantees/rooms_multiple/
       goal_radius: 1
       observation:
-        type: rgbd
+        type: rgb
         rgb:
           x_offset_from_robot_front: 0.05  # no y offset
           z_offset_from_robot_top: 0.05
@@ -92,7 +94,7 @@ planning:
   init_state: [5, 0.2, 0, 0]   # initial state [x, y, vx, vy]
   goal_f: [7, -2, 0.5, 0]      # goal location with forrestal coordinates
   dt: 0.1                      # time resolution for controls
-  sensor_dt: 0.5                 # time resolution for perception update
+  sensor_dt: 0.5               # time resolution for perception update
   r: 3                         # cost threshold for reachability
   radius: 0.5                  # radius for finding intermediate goals
   FoV: 60                      # field of view (in degrees)
@@ -102,5 +104,5 @@ planning:
   max_search_iter: 1000
   weight: 10                   # weight for cost to go vs. cost to come
   seed: 0
-  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset-4k.pkl
-  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable-4k.pkl
+  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset.pkl
+  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable.pkl

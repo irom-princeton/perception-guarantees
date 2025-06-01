@@ -28,6 +28,7 @@ class World:
         self.occ_space = None # estimated bounding boxes at this time step
         self.free_space = None # estimated free space
         self.box_space = None  # estimated occupied space
+        self.free_space_new = None # new free space after occlusion
 
         self.counter = 0
 
@@ -262,7 +263,7 @@ class SafePlanner:
         '''Load pre-computed reachable sets'''
         self.Pset = pickle.load(open(Pset_path,'rb'))
         self.reachable = pickle.load(open(reachable_path,'rb'))
-        self.num_samples = len(self.Pset)-1
+        self.n_samples = len(self.Pset)-1
         # self.point_objects = MultiPoint(np.array(self.Pset)[:,0:2])
 
     def goal_inter(self, start_idx):

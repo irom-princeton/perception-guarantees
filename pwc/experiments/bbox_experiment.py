@@ -2,6 +2,8 @@ import numpy as np
 import time
 from scipy.spatial.distance import cdist
 import matplotlib.pyplot as plt
+from tqdm import tqdm
+import os
 
 from pwc.experiments.base_experiment import BaseExperiment
 from pwc.utils.task_util import initialize_task
@@ -22,15 +24,17 @@ class BBoxExperiment(BaseExperiment):
             planner,):
         task_dataset = initialize_task(self.config.task)
 
-        for i in range(self.config.num_envs):
-            task = task_dataset[-i-1] # start from the back
-            results = self.plan_env(
-                task=task,
-                env=env,
-                perception_model=perception_model,
-                planner=planner,
-                experiment_config=self.config
-            )
+        for task in tqdm(task_dataset):
+            if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
+                print("Running task:", task.env)
+                self.plan_env(
+                    task=task,
+                    env=env,
+                    perception_model=perception_model,
+                    planner=planner,
+                    experiment_config=self.config
+                )
+            
 
     def plan_env(self, task, env, perception_model, planner, experiment_config=None):
         """
@@ -77,7 +81,7 @@ class BBoxExperiment(BaseExperiment):
             X = X[:, X[0,:]>0.05]
             X = X[:, X[0,:] < 7.95]
             
-            X = np.tranplannerose(np.array(X))
+            X = np.transpose(np.array(X))
             misdetected += perception_model.count_misdetection(boxes, ground_truth, X, task.piece_bounds_all)
             # print("Misdetected: ", misdetected)
             time_misdetected+=1
@@ -135,12 +139,15 @@ class BBoxExperiment(BaseExperiment):
             if t > 140 or plan_fail > 10:
                 print("Env: ", str(task.env), " Failed")
                 break
-        filename = experiment_config.task.room_folder + str(task.env) + '/cp' + str(experiment_config.cp)
+        filename = f'{experiment_config.task.room_folder}{task.env}/cp_{experiment_config.cp}_{experiment_config.name}_{experiment_config.save_tag}'
         self.plot_results(filename, state_traj , ground_truth, planner)
 
-        return {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
+        result = {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
+        np.savez_compressed(filename, data=result)
 
-    def plot_results(filename, state_traj , ground_truth, sp):
+        return result
+
+    def plot_results(self, filename, state_traj , ground_truth, sp):
         fig, ax = sp.world.show(true_boxes=ground_truth)
         plt.gca().set_aspect('equal', adjustable='box')
         if len(state_traj) >0:
@@ -150,9 +157,63 @@ class BBoxExperiment(BaseExperiment):
                 state_tf = state_tf.reshape((4,1))
             ax.plot(state_tf[0, :], state_tf[1, :], c='r', linewidth=1, label='state')
         plt.legend()
-        # plt.savefig(filename + f'traj_plot_4k_{prefix}.png')
-        plt.savefig('plot.png')
+        plt.savefig(filename + f'traj_plot.png')
+        # plt.savefig('plot.png')
         # plt.show()
-            
+    
+    def extract_results(self):
+        """
+        Extract results from the experiment.
         
+        Args:
+            task_dataset: The dataset of tasks.
+            experiment_config: The configuration for the experiment.
+        """
+        task_dataset = initialize_task(self.config.task)
+        filename = f'cp_{self.config.cp}_{self.config.name}_{self.config.save_tag}'
+        
+        traj = {}
+        done= []
+        coll = []
+        misdetect = []
+        dist_from_goal = 0
+        envs = []
+        traj_length = 0
 
+        for task in tqdm(task_dataset):
+            if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
+                file_env = f'{self.config.task.room_folder}{task.env}/{filename}.npz'
+
+                # check if file exists
+                if not os.path.exists(file_env):
+                    print("File does not exist: ", file_env)
+                    continue
+
+                data_ = np.load(file_env, allow_pickle=True)
+                traj_info = data_["data"].item()
+                traj[task.env] = traj_info['trajectory']
+                envs.append(task.env)
+                done.append(int(traj_info['done']))
+                coll.append(int(traj_info['collision']==False))
+                misdetect.append(traj_info['misdetection'])
+
+        for i, env in enumerate(envs):
+            if len(traj[env]) == 0:
+                dist_from_goal += np.linalg.norm(np.array(self.config.goal_loc[0:2])-np.array(self.config.init_state[0:2]))
+            else:
+                if done[i] == 1:
+                    traj_length+= np.sum(np.linalg.norm(np.array(traj[env][:-1,0,0:2]) - np.array(traj[env][1:,0, 0:2]), axis=1))
+                if done[i] == 0:
+                    dist_from_goal += np.linalg.norm(np.array(traj[env][-1,0,0:2]-np.array(self.config.goal_loc_planner_frame)))-1
+
+        print("Average trajectory length: ", traj_length/np.sum(done))
+        print("Successful task completion: ", np.mean(done))
+        print("Safety rate: ", np.mean(coll))
+        print("Misdetection rate: ", len(np.where(np.array(misdetect)>0)[0])/self.config.num_envs)
+        print("Failed in environments: ", np.array(envs)[np.where(np.array(done)<1)[0]])
+        print("Collisions in environments: ", np.array(envs)[np.where(np.array(coll)<1)[0]])
+        print("Misdetections in environments: ", np.array(envs)[np.where(np.array(misdetect)>0)[0]])
+        print("Average distance from goal if failed: ", dist_from_goal/(np.sum(1-np.array(done))) )
+
+
+        

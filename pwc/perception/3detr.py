@@ -117,7 +117,7 @@ class Perception3DETR(PerceptionModel):
         num_boxes = 15
         corners = []
         if np.any(np.isnan(np.array(bbox_pred_points))):
-            return self.get_room_size_box(pc_all)
+            return self.get_room_size_box(pc_all)[0]
         
         for (sorted_idx,prob) in zip(list(sort_box[1][0,:]), list(sort_box[0][0,:])):
             if (num_probs < num_boxes):

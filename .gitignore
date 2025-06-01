@@ -5,6 +5,8 @@ trained_models/
 
 *.pth
 *.html
+*.pdf
+*.png
 planning/plots/
 trash/
 planning/pre_compute/

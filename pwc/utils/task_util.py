@@ -17,7 +17,7 @@ def initialize_task(task_config): #TODO: support overwriting defaults from confi
         # Initialize task
         task.goal_radius = 1
         task.observation = {}
-        task.observation.type = 'rgbd'  # 'rgb' or 'lidar' or 'rgbd'
+        task.observation.type = task_config.observation.type  # 'rgb' or 'lidar' or 'rgbd'
         task.observation.rgb = {}
         task.observation.depth = {}
         task.observation.lidar = {}
