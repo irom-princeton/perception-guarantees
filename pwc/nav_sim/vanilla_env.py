@@ -189,19 +189,12 @@ class VanillaEnv():
         )
 
         # Get Image
-        far = 1000.0
-        near = 0.01
+        far = 5
+        near = 1
         projection_matrix = self._p.computeProjectionMatrixFOV(
             fov=rgb_cfg.fov, aspect=rgb_cfg.aspect, nearVal=near,
             farVal=far
         )
-        _, _, rgb_img, depth, _ = self._p.getCameraImage(
-            rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix,
-            flags=self._p.ER_NO_SEGMENTATION_MASK, shadow=1,
-            lightDirection=[1, 1, 1]
-        )
-        depth = np.reshape(depth, (1, depth_cfg.img_h, depth_cfg.img_w))
-        depth = far * near / (far - (far-near) * depth)
 
         if self.observation_type == 'rgb':
             return self._get_rgb()
@@ -209,13 +202,11 @@ class VanillaEnv():
             return self._get_lidar()
         elif self.observation_type == 'rgbd':
             rgb = self._get_rgb()
-            # lidar = self._get_lidar()
-            pc = self._get_point_cloud(depth, rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix)
-            # print("RGB shape: ", rgb.shape, " LiDAR shape: ", lidar.shape)
+            pc = self._get_point_cloud(rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix)
             # black_rgb = np.zeros(lidar.shape) + 0.1
-            return (pc,rgb) # np.vstack((lidar, black_rgb))
+            return (pc.T,rgb) # np.vstack((lidar, black_rgb))
 
-    def _get_point_cloud(self, _, width, height, view_matrix, proj_matrix):
+    def _get_point_cloud(self, width, height, view_matrix, proj_matrix):
         # based on https://stackoverflow.com/questions/59128880/getting-world-coordinates-from-opengl-depth-buffer
 
         # get a depth image
@@ -224,7 +215,7 @@ class VanillaEnv():
                                       flags=self._p.ER_NO_SEGMENTATION_MASK, shadow=1,
                                       lightDirection=[1, 1, 1])
         depth = np.array(image_arr[3])
-        depth = median_filter(depth, 4)
+        # depth = median_filter(depth, 4)
 
 
         # create a 4x4 transform matrix that goes from pixel coordinates (and depth values) to world coordinates
@@ -241,14 +232,14 @@ class VanillaEnv():
 
         pixels = np.stack([x, y, z, h], axis=1)
         # filter out "infinite" depths
-        # pixels[z > 0.9999] = 0 #np.inf
+        pixels[z > 0.9999] = 0 #np.inf
         pixels[:, 2] = 2 * pixels[:, 2] - 1
 
         # turn pixels to world coordinates
         points = np.matmul(tran_pix_world, pixels.T).T
         points /= points[:, 3: 4]
         points = points[:, :3]
-        points = points.reshape(height, width, 3)
+        # points = points.reshape(height, width, 3)
 
         return points
 

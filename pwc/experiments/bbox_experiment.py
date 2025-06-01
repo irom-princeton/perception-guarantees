@@ -1,6 +1,6 @@
 import numpy as np
 import time
-from scipy.spatial.distance import cdist
+import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import os
@@ -47,13 +47,12 @@ class BBoxExperiment(BaseExperiment):
             planner: The planner used to generate plans.
         """
         # reset and initialize
-        env.reset(task=task)
+        observation = env.reset(task=task)[0]
         planner.reset()
         env.dt = planner.dt # match frequency
 
         # initialize
         t = 0
-        observation = env.step([0,0])[0] # initial observation
         steps_taken = 0
         state_traj = []
         gt_obs = [[[obs[0], obs[1], obs[2]],[obs[3], obs[4], obs[5]]] for obs in task.piece_bounds_all]
@@ -69,12 +68,13 @@ class BBoxExperiment(BaseExperiment):
 
         while True and not done and not collided:
             state = planner.world.state_to_planner(env._state)
-            # print('state:',state)
+            # print(f'state at step {steps_taken}: {state}')
             boxes = perception_model.get_box(observation, experiment_config)
             # print(boxes)
             boxes[:,0,:] -= experiment_config.cp
             boxes[:,1,:] += experiment_config.cp
             boxes = planner.world.boxes_to_planner_frame(boxes)
+
             ###########################################################################
             X = observation[:, (observation[2, :] >0.1)]
             X = X[:, np.abs(X[1,:]) < 3.9]
@@ -90,6 +90,7 @@ class BBoxExperiment(BaseExperiment):
             st = time.time()
             res = planner.plan(state, boxes)
             t+=(time.time() - st)
+
             if (steps_taken % 10) == 0 and experiment_config.visualize:
                 planner.show(res[0], true_boxes=np.array(ground_truth))
             steps_taken+=1
@@ -98,15 +99,7 @@ class BBoxExperiment(BaseExperiment):
                 policy = (np.array([[0,1],[-1,0]])@policy_before_trans.T).T
                 prev_policy = np.copy(policy)
 
-                # find steps to node
-                x_waypoints = np.vstack(res[1])
-
-                for i in range(min(int(planner.sensor_dt/planner.dt),len(x_waypoints)),len(x_waypoints)):
-                    if min(cdist(np.array([x_waypoints[i]]), planner.Pset)[0]) < 0.2:
-                        node_step = i
-                        break
-
-                for step in range(min(node_step, len(policy))):
+                for step in range(min(int(planner.sensor_dt/planner.dt), len(policy))):
                     idx_prev = step
                     state = env._state
                     state_traj.append(planner.world.state_to_planner(state))
@@ -118,7 +111,9 @@ class BBoxExperiment(BaseExperiment):
                                 collided = True
                                 break
                     action = policy[step]
-                    observation, reward, done, info = env.step(action)
+                    obs, reward, done, info = env.step(action)
+                    observation = obs[0] # get pc
+
                     t += planner.dt
                     if done:
                         print("Env: ", str(task.env), " Success!")
@@ -130,20 +125,24 @@ class BBoxExperiment(BaseExperiment):
                 if (len(prev_policy) > idx_prev+1): 
                     idx_prev += 1
                     action = prev_policy[idx_prev]
-                    observation, reward, done, info = env.step(action)
+                    obs, reward, done, info = env.step(action)
+                    observation = obs[0] # get pc
                     t += planner.dt
                 else:
                     action = [0,0]
-                    observation, reward, done, info = env.step(action)
+                    obs, reward, done, info = env.step(action)
+                    observation = obs[0] # get pc
                     t += planner.dt
+                    plan_fail += 1
             if t > 140 or plan_fail > 10:
                 print("Env: ", str(task.env), " Failed")
                 break
-        filename = f'{experiment_config.task.room_folder}{task.env}/cp_{experiment_config.cp}_{experiment_config.name}_{experiment_config.save_tag}'
+        filename = f'{experiment_config.task.room_folder}{task.env}/cp_{experiment_config.cp}_{experiment_config.name}{experiment_config.save_tag}'
         self.plot_results(filename, state_traj , ground_truth, planner)
 
         result = {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
         np.savez_compressed(filename, data=result)
+        print(f"Results saved to {filename}.npz")
 
         return result
 
@@ -170,7 +169,7 @@ class BBoxExperiment(BaseExperiment):
             experiment_config: The configuration for the experiment.
         """
         task_dataset = initialize_task(self.config.task)
-        filename = f'cp_{self.config.cp}_{self.config.name}_{self.config.save_tag}'
+        filename = f'cp_{self.config.cp}_{self.config.name}{self.config.save_tag}'
         
         traj = {}
         done= []

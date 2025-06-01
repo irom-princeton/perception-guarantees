@@ -1,17 +1,8 @@
 perception: 
-  _target_: pwc.perception.3detr.Perception3DETR
+  _target_: pwc.perception.nu-mcc.PerceptionNUMCC
   config:
-    visualize: False
-    num_pc_points: 40000
-    num_chairs: 5
-    num_boxes: 15
-    room_thresholds:
-      xmin: 0.05
-      xmax: 7.95
-      ymin: -3.9
-      ymax: 3.9
-      zmin: 0.1
-      zmax: 2.9
+    ckpt_path: pwc/perception/numcc/pretrained/numcc_hypersim_550c.pth
+    udf_threshold: 1.91
 
 nav_sim:
   _target_: pwc.nav_sim.task_env.TaskEnv

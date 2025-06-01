@@ -94,23 +94,23 @@ class World:
         dark_orange = (106/255,168/255,79/255, 1) # dark green
         # dark_orange = (255/255, 66/255, 15/255, 1)
         
-        # if self.occ_space.geom_type == 'Polygon':
-        #     self.occ_space = MultiPolygon([self.occ_space])
-        # for geom in self.box_space.geoms:
-        #     xs, ys = geom.exterior.xy
-        #     ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
-        if self.old_occ_space is not None:
-            if self.old_occ_space.geom_type == 'Polygon':
-                self.old_occ_space = MultiPolygon([self.old_occ_space])
-            for geom in self.old_occ_space.geoms:
-                xs, ys = geom.exterior.xy
-                ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
-        if self.new_occ_space is not None:
-            if self.new_occ_space.geom_type == 'Polygon':
-                self.new_occ_space = MultiPolygon([self.new_occ_space])
-            for geom in self.new_occ_space.geoms:
-                xs, ys = geom.exterior.xy
-                ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
+        if self.occ_space.geom_type == 'Polygon':
+            self.occ_space = MultiPolygon([self.occ_space])
+        for geom in self.box_space.geoms:
+            xs, ys = geom.exterior.xy
+            ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
+        # if self.old_occ_space is not None:
+        #     if self.old_occ_space.geom_type == 'Polygon':
+        #         self.old_occ_space = MultiPolygon([self.old_occ_space])
+        #     for geom in self.old_occ_space.geoms:
+        #         xs, ys = geom.exterior.xy
+        #         ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
+        # if self.new_occ_space is not None:
+        #     if self.new_occ_space.geom_type == 'Polygon':
+        #         self.new_occ_space = MultiPolygon([self.new_occ_space])
+        #     for geom in self.new_occ_space.geoms:
+        #         xs, ys = geom.exterior.xy
+        #         ax.fill(xs,ys, edgecolor = dark_orange, linestyle = '--', fc=orange)
         if self.free_space is not None and self.free_space.geom_type == 'Polygon':
             xs, ys = self.free_space.exterior.xy
             ax.fill(xs,ys, edgecolor = 'k',fc=blue)
@@ -118,13 +118,13 @@ class World:
             for geom in self.free_space.geoms:
                 xs, ys = geom.exterior.xy
                 ax.fill(xs,ys, edgecolor = 'k',fc=blue)
-        if self.free_space_new is not None and self.free_space_new.geom_type == 'Polygon':
-            xs, ys = self.free_space_new.exterior.xy
-            ax.fill(xs,ys, edgecolor = 'k',fc=blue)
-        elif self.free_space_new is not None and self.free_space_new.geom_type == 'MultiPolygon':
-            for geom in self.free_space_new.geoms:
-                xs, ys = geom.exterior.xy
-                ax.fill(xs,ys, edgecolor = 'k',fc=blue)
+        # if self.free_space_new is not None and self.free_space_new.geom_type == 'Polygon':
+        #     xs, ys = self.free_space_new.exterior.xy
+        #     ax.fill(xs,ys, edgecolor = 'k',fc=blue)
+        # elif self.free_space_new is not None and self.free_space_new.geom_type == 'MultiPolygon':
+        #     for geom in self.free_space_new.geoms:
+        #         xs, ys = geom.exterior.xy
+        #         ax.fill(xs,ys, edgecolor = 'k',fc=blue)
         if true_boxes is not None:
             for box in true_boxes:
                 ax.add_patch(Rectangle((box[0,0],box[0,1]),box[1,0]-box[0,0],box[1,1]-box[0,1],edgecolor = 'k',linewidth = 2, fc='k'))
@@ -421,9 +421,9 @@ class SafePlanner:
         # apply filter to update the world
         if self.world.occ_space is not None:
             self.world.old_occ_space = self.world.occ_space
-
-        self.world.update(new_boxes)
         
+        self.world.update(new_boxes)
+
         # occlusion
         sense_range = state[0,1]+self.FoV_range*np.cos(self.FoV/2)
         tooclose = Polygon([[state[0,0]-self.FoV_close,state[0,1]-self.FoV_close],

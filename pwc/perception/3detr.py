@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from itertools import product, combinations
 
 from pwc.perception.models import build_model
@@ -102,16 +102,25 @@ class Perception3DETR(PerceptionModel):
 
         # Visualize
         if exp_config.visualize:
-            pc_plot = pc[:, pc[0,:,2] > 0.0,:]
-            plt.figure()
-            ax = plt.axes(projection='3d')
-            ax.scatter3D(
-                pc_plot[0,:,0], pc_plot[0,:,1],pc_plot[0,:,2]
+            pc_plot = pc[:, pc[0,:,2] > 0.0, :]
+            fig = go.Figure(data=[
+                go.Scatter3d(
+                    x=pc_plot[0,:,0],
+                    y=pc_plot[0,:,1],
+                    z=pc_plot[0,:,2],
+                    mode='markers',
+                    marker=dict(size=2)
+                )
+            ])
+            fig.update_layout(
+                scene=dict(
+                    xaxis_title='X',
+                    yaxis_title='Y',
+                    zaxis_title='Z',
+                    aspectmode='auto'
+                )
             )
-            ax.set_xlabel('X')
-            ax.set_ylabel('Y')
-            ax.set_zlabel('Z')
-            ax.set_aspect('auto')
+            fig.show()
 
         num_probs = 0
         num_boxes = 15
@@ -149,7 +158,19 @@ class Perception3DETR(PerceptionModel):
                             np.sum(np.abs(s-e)) == r1[1]-r1[0] or 
                             np.sum(np.abs(s-e)) == r2[1]-r2[0]):
                             if (exp_config.visualize and not flag):
-                                ax.plot3D(*zip(s, e), color=(0.5+0.5*prob, 0.1,0.1))
+                                fig.add_trace(
+                                    go.Scatter3d(
+                                        x=[s[0], e[0]],
+                                        y=[s[1], e[1]],
+                                        z=[s[2], e[2]],
+                                        mode='lines',
+                                        line=dict(
+                                            color=f'rgba({int(255*(0.5+0.5*prob))}, 25, 25, 1)',
+                                            width=4
+                                        ),
+                                        showlegend=False
+                                    )
+                                )
         
         if exp_config.is_finetune:
             finetuned_arr = finetune.cpu().detach().numpy()
@@ -346,6 +367,7 @@ class Perception3DETR(PerceptionModel):
         return sorted_pred
     
     def count_misdetection(self, pred_boxes, ground_truth, X, piece_bounds):
+        
         if(len(X) > 0):
             is_vis = is_box_visible(X, piece_bounds, visualize=False)
         else: 
