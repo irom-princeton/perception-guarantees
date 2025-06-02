@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import torch.nn as nn
-from numcc.src.fns import shrink_points_beyond_threshold, preprocess_img
-from numcc.src.model.encoder import MCCEncoder
-from numcc.src.model.decoder_anchor import DecoderPredictCenters
-from numcc.src.model.decoder_feature import FeatureAggregator
+from pwc.perception.numcc.src.fns import shrink_points_beyond_threshold, preprocess_img
+from pwc.perception.numcc.src.model.encoder import MCCEncoder
+from pwc.perception.numcc.src.model.decoder_anchor import DecoderPredictCenters
+from pwc.perception.numcc.src.model.decoder_feature import FeatureAggregator
 import torch
 import torch.nn.functional as F
 

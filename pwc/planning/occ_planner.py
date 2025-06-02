@@ -9,9 +9,9 @@ from scipy.linalg import expm
 from scipy.stats import rankdata
 from pathlib import Path
 import plotly.graph_objects as go
-from scipy.ndimage import median_filter, binary_closing
-from pwc.utils.planning_util import show_trajectory
+from scipy.ndimage import binary_closing
 import matplotlib.pyplot as plt
+import time
 
 import pickle
 
@@ -19,12 +19,13 @@ import pickle
 # base path
 base_path: Path = Path(__file__).parent.parent
 
-[k1, k2, A, B, R, BRB] = pickle.load(open(f'{base_path}/planning/sp_var.pkl','rb'))
+[k1, k2, A, B, R, BRB] = pickle.load(open(f'{base_path}/planning/sp_var.pkl','rb')) #TODO: load from config
 expA = expm(A*10**3)
 
 class World():
     def __init__(self, 
                  map_design: np.ndarray,
+                 room_size: float = 8.0, #meters
                  fov: int = 60, #degrees
                  sensor_range: int = 48, #pixels
                  path_resolution: float = 0.1,
@@ -32,6 +33,7 @@ class World():
                 ):
         self.map_design = map_design
         self.map_size = map_design.shape
+        self.room_size = room_size
         self.fov = fov
         self.sensor_range = sensor_range
         self.path_resolution = path_resolution
@@ -147,12 +149,6 @@ class World():
                         continue
                     visible_cells.add((x, y))  # Otherwise, mark as visible
 
-            # # add a circle around the observer
-            # for i in range(-3,4):
-            #     for j in range(-3,4):
-            #         if np.sqrt(i**2+j**2)<=3:
-            #             visible_cells.add((x0+i,y0+j))
-
             return visible_cells
         
         visible_cells = compute_occlusion(self.map_design, state, self.sensor_range)
@@ -165,8 +161,6 @@ class World():
         pred_free_close = binary_closing(pred_free, np.ones((2,2)))
         pred_free = np.logical_or(pred_free, pred_free_close)
         
-        # pred_occ = median_filter(pred_occ, size=2) # apply filter to cover random holes
-        # pred_occ = binary_closing(pred_occ, 0.5*np.ones((3,3))).astype(float)
         pred_occ[np.where(pred_free == 1)] = 0.5
         self.map_design = pred_occ
         # construct obstacle tree
@@ -174,6 +168,8 @@ class World():
         self.obstacles_tree = cKDTree(obstacles)
 
         return self
+    
+    # ---------- Coordinate transform functions ----------
     def state_to_pixel(self, state: np.ndarray) -> np.ndarray:
         """
         Convert planner state to pixel location
@@ -186,10 +182,9 @@ class World():
         """
         forward = state[1]
         right = state[0]
-        room_size = 8
 
-        x = int(self.map_size[0]-np.floor(forward/room_size*self.map_size[0]))
-        y = int(np.floor(right/room_size*self.map_size[1]))
+        x = int(self.map_size[0]-np.floor(forward/self.room_size*self.map_size[0]))
+        y = int(np.floor(right/self.room_size*self.map_size[1]))
         pix_loc = np.array([x, y])
 
         return pix_loc
@@ -206,13 +201,16 @@ class World():
         """
         x = pixel[0]
         y = pixel[1]
-        room_size = 8
 
-        forward = (self.map_size[0]-x)/self.map_size[0]*room_size
-        right = y/self.map_size[1]*room_size
+        forward = (self.map_size[0]-x)/self.map_size[0]*self.room_size
+        right = y/self.map_size[1]*self.room_size
         state = np.array([right, forward])
 
         return state
+    
+    def state_to_planner(self, state: np.ndarray) -> np.ndarray:
+        # convert robot state to planner coordinates
+        return (np.array([[[0,-1,0,0],[1,0,0,0],[0,0,0,-1],[0,0,1,0]]])@np.array(state) + np.array([self.room_size/2,0,0,0])).squeeze()
 
     def check_collision(self, src: np.ndarray, dst: np.ndarray) -> bool:
         """
@@ -274,11 +272,11 @@ class World():
         return self.check_collision(new_state, None)
         
 
-class Safe_Planner():
+class OccPlanner():
     def __init__(
         self,
-        # map_design: np.ndarray,
-        init_state: list = [3,0.5,0,0],
+        map_size: list = (83, 83), 
+        room_size: float = 8.0,
         n_samples: int = 1000,
         r_n: float = 20.0,
         path_resolution: float = 0.1,
@@ -287,8 +285,8 @@ class Safe_Planner():
         rr: float = 1.0,
         max_search_iter: int = 10000,
         seed: int = 0,
-        Pset: np.ndarray = None,
-        reachable: np.ndarray = None,
+        Pset_path: str = None,
+        reachable_path: str = None,
         verbose=False
     ):
         """
@@ -305,7 +303,6 @@ class Safe_Planner():
         """
 
         # hyperparameters
-        # self.map_size = map_design.shape
         self.path_resolution = path_resolution
         self.sensor_dt = sensor_dt
         self.dt = dt
@@ -315,23 +312,26 @@ class Safe_Planner():
         self.max_search_iter = max_search_iter
         self.prng = np.random.RandomState(seed)  # initialize PRNG
 
-        # construct obstacle tree
-        # obstacles = np.argwhere(map_design == 1)
-        # self.obstacles_tree = cKDTree(obstacles)
-        self.world = World(np.ones((83,83)))
-        # self.world = self.world.occlusion(self.world.state_to_pixel(init_state[0:2]))
-
-
-        # initialize graph
-        # SampleFree
-        self.graph = nx.Graph()
-        self.node_list = list()
+        self.room_size = room_size
+        self.map_size = map_size
     
         '''Load pre-computed reachable sets'''
-        self.Pset = Pset
-        self.reachable = reachable
+        if Pset_path is not None and reachable_path is not None:
+            self.Pset = pickle.load(open(Pset_path, 'rb'))
+            self.reachable = pickle.load(open(reachable_path, 'rb'))
+            self.n_samples = len(self.Pset)
 
         self.verbose = verbose
+
+        self.reset()
+
+    def reset(self):
+        self.graph = nx.Graph()
+        self.node_list = list()
+        # construct obstacle tree
+        self.world = World(map_design=np.ones(self.map_size),
+                           room_size=self.room_size,)
+
         
     def goal_inter(self, start_id: int) -> np.ndarray:
         '''Returns best intermediate goal to explore'''
@@ -348,7 +348,7 @@ class Safe_Planner():
             right = self.world.map_design[free_space[0][i], min(self.world.map_size[1]-1, free_space[1][i]+1)]
             top = self.world.map_design[max(0, free_space[0][i]-1), free_space[1][i]]
             bottom = self.world.map_design[min(self.world.map_size[0]-1, free_space[0][i]+1), free_space[1][i]]
-            if (left ==0 or right ==0 or top ==0 or bottom ==0):# and (
+            if (left != 0.5 or right != 0.5 or top != 0.5 or bottom != 0.5):# and (
                 # left !=1 and right !=1 and top !=1 and bottom !=1
             # ):
                 boundary.append([free_space[0][i], free_space[1][i]])
@@ -425,9 +425,10 @@ class Safe_Planner():
         # assert self.world.check_collision(start[0:2], None)
         # assert self.check_collision(goal[0:2], None)
         # update world
+        ft = time.time()
         self.world = self.world.update(map_design, start)
         self.world = self.world.occlusion(self.world.state_to_pixel(start[0:2]))
-        
+        print(f"Filter time: {time.time()-ft:.2f} seconds")
         # initialize
         self.bool_valid = np.zeros(len(self.Pset), dtype=bool)
         
@@ -593,11 +594,6 @@ class Safe_Planner():
                             self.world.state_to_pixel(self.Pset[j])[1]], 
                             [self.world.state_to_pixel(self.Pset[i])[0], 
                             self.world.state_to_pixel(self.Pset[j])[0]], 'k-', linewidth=0.1)
-        # for i in range(len(idx_solution) - 1):
-        #     s0 = idx_solution[i] #idx
-        #     s1 = idx_solution[i + 1] #idx
-        #     Ginv = self.reachable[s1][2][3][self.reachable[s1][2][0].index(s0)]
-        #     show_trajectory(plt, self.Pset[s0], self.Pset[s1], Ginv, self.time[s1], self.dt, c_='red', linewidth_=1)
         plt.show()
 
         

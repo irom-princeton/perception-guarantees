@@ -10,7 +10,7 @@ import torch
 from pytorch3d.implicitron.dataset.dataset_base import FrameData
 from pytorch3d.ops import sample_points_from_meshes
 
-from numcc.util.hypersim_utils import read_h5py, read_img
+from pwc.perception.numcc.util.hypersim_utils import read_h5py, read_img
 
 
 def hypersim_collate_fn(batch):

@@ -20,14 +20,14 @@ import torch
 import numpy as np
 import time
 
-import numcc.util.misc as misc
-import numcc.util.lr_sched as lr_sched
+import pwc.perception.numcc.util.misc as misc
+import pwc.perception.numcc.util.lr_sched as lr_sched
 
-from numcc.src.fns import *
+from pwc.perception.numcc.src.fns import *
 from tqdm import tqdm
 
 from pytorch3d.ops import sample_farthest_points
-import numcc.util.misc as misc
+import pwc.perception.numcc.util.misc as misc
 
 def train_one_epoch(model: torch.nn.Module,
                     data_loader: Iterable, optimizer: torch.optim.Optimizer,

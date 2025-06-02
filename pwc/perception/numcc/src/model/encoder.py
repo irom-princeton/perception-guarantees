@@ -15,8 +15,8 @@
 import torch
 import torch.nn as nn
 from timm.models.vision_transformer import PatchEmbed, Block
-from numcc.util.pos_embed import get_2d_sincos_pos_embed
-from numcc.src.layers import XYZPosEmbed
+from pwc.perception.numcc.util.pos_embed import get_2d_sincos_pos_embed
+from pwc.perception.numcc.src.layers import XYZPosEmbed
 import torch.nn.functional as F
 
 class MCCEncoder(nn.Module):

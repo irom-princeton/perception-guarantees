@@ -16,10 +16,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as functional
 import torch.nn.functional as F
-from numcc.src.fns import square_distance, index_points
+from pwc.perception.numcc.src.fns import square_distance, index_points
 import math
 import numpy as np
-from numcc.src.layers import positional_encoding
+from pwc.perception.numcc.src.layers import positional_encoding
     
 class CrossTransformerBlock(nn.Module):
     def __init__(self, dim_inp, dim, nneigh=5, args=None):

@@ -18,8 +18,8 @@ import torch
 import numpy as np
 from pytorch3d.transforms import RotateAxisAngle
 import torch.nn.functional as F
-from numcc.src.layers import LayerNorm
-from numcc.src.chamfer_loss_separate import chamfer_distance_sep
+from pwc.perception.numcc.src.layers import LayerNorm
+from pwc.perception.numcc.src.chamfer_loss_separate import chamfer_distance_sep
 
 
 def repulsive(points):

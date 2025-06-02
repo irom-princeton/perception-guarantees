@@ -17,7 +17,7 @@ from shapely import make_valid
 from pwc.utils.planning_util import turn_box, non_det_filter, filter_reachable
 
 # load model parameters
-[k1, k2, A, B, R, BRB] = pickle.load(open('pwc/planning/sp_var.pkl','rb'))
+[k1, k2, A, B, R, BRB] = pickle.load(open('pwc/planning/sp_var.pkl','rb')) #TODO: load from config
 # print('A:', A)
 expA = expm(A*10**3)
 

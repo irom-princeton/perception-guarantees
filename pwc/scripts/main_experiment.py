@@ -27,7 +27,7 @@ if __name__ == "__main__":
         "--config_name",
         type=str, 
         required=False,
-        default="pwc-3detr",
+        default= "pwc-numcc", # "pwc-3detr",
         help="Name of the config file"
     )
     

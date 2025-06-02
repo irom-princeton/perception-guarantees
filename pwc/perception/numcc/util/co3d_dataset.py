@@ -8,7 +8,7 @@ from typing import cast
 import torch
 from pytorch3d.implicitron.dataset.dataset_base import FrameData
 
-import numcc.util.co3d_utils as co3d_utils
+import pwc.perception.numcc.util.co3d_utils as co3d_utils
 
 
 def co3dv2_collate_fn(batch):

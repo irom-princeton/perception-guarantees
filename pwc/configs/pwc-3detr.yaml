@@ -30,7 +30,7 @@ nav_sim:
       camera_thickness: 0.04
     dynamics:
       params_path: pwc/planning/sp_var.pkl
-      dt: 2
+      dt: 0.1
 
     
 #TODO 
@@ -61,7 +61,7 @@ experiment:
       room_folder: /home/zm2074/Projects/data/perception-guarantees/rooms_multiple/
       goal_radius: 1
       observation:
-        type: rgbd
+        type: depth
         rgb:
           x_offset_from_robot_front: 0.05  # no y offset
           z_offset_from_robot_top: 0.05

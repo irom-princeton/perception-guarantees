@@ -17,8 +17,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from timm.models.vision_transformer import PatchEmbed, Block, Mlp, DropPath
-from numcc.util.pos_embed import get_2d_sincos_pos_embed
-from numcc.src.fns import *
+from pwc.perception.numcc.util.pos_embed import get_2d_sincos_pos_embed
+from pwc.perception.numcc.src.fns import *
 import math
 
 

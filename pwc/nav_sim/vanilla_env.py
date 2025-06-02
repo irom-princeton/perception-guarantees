@@ -122,7 +122,6 @@ class VanillaEnv():
         self.rgb_cfg = task.observation.rgb
         self.depth_cfg = task.observation.depth
         self.lidar_cfg = task.observation.lidar
-        # TODO: Set up LiDAR noise model
 
     def step(self, action):
         """
@@ -200,13 +199,15 @@ class VanillaEnv():
             return self._get_rgb()
         elif self.observation_type == 'lidar':
             return self._get_lidar()
+        elif self.observation_type == 'depth':
+            pc = self._get_point_cloud(rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix, organized=False)
+            return pc.T 
         elif self.observation_type == 'rgbd':
             rgb = self._get_rgb()
-            pc = self._get_point_cloud(rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix)
-            # black_rgb = np.zeros(lidar.shape) + 0.1
-            return (pc.T,rgb) # np.vstack((lidar, black_rgb))
+            pc = self._get_point_cloud(rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix, organized=True)
+            return (pc,rgb)
 
-    def _get_point_cloud(self, width, height, view_matrix, proj_matrix):
+    def _get_point_cloud(self, width, height, view_matrix, proj_matrix, organized=False):
         # based on https://stackoverflow.com/questions/59128880/getting-world-coordinates-from-opengl-depth-buffer
 
         # get a depth image
@@ -239,7 +240,8 @@ class VanillaEnv():
         points = np.matmul(tran_pix_world, pixels.T).T
         points /= points[:, 3: 4]
         points = points[:, :3]
-        # points = points.reshape(height, width, 3)
+        if organized:
+            points = points.reshape(height, width, 3)
 
         return points
 
@@ -268,15 +270,9 @@ class VanillaEnv():
             flags=self._p.ER_NO_SEGMENTATION_MASK, shadow=1,
             lightDirection=[1, 1, 1]
         )
-        depth = np.reshape(depth, (1, depth_cfg.img_h, depth_cfg.img_w))
-        depth = far * near / (far - (far-near) * depth)
 
         # Convert RGB to CHW and uint8
         rgb = rgba2rgb(rgb_img).transpose(2, 0, 1)
-        # pc = self._get_point_cloud(depth, rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix)
-        # print("Depth map, ", pc.shape)
-        # print("RGB shape: ", rgb_img.shape, " Depth shape: ", depth.shape)
-        # print("Height: ", rgb_cfg.img_h, " Width: ", rgb_cfg.img_w)
         return rgb #(3,H,W)
     
     def _get_lidar(self):
@@ -499,8 +495,6 @@ class VanillaEnv():
         """
         Load furniture meshes at specified poses.
 
-        # TODO: skip if no need to switch furniture
-
         Args:
             task (dict): Task dict.
         """
@@ -606,9 +600,7 @@ class VanillaEnv():
     def move_camera(self, state):
         """
         Move camera and LiDAR to follow the robot. Update camera/LiDAR visualization if render.
-        
-        TODO: add noise to camera/LiDAR pose
-        
+                
         Args:
             state (np.ndarray): State of the robot.
         """

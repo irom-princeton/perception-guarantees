@@ -4,11 +4,12 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import os
+import torch
 
 from pwc.experiments.base_experiment import BaseExperiment
 from pwc.utils.task_util import initialize_task
 
-class BBoxExperiment(BaseExperiment):
+class OccExperiment(BaseExperiment):
     """
     Experiment class for planning and navigating through environments using bounding boxes.
     
@@ -25,7 +26,7 @@ class BBoxExperiment(BaseExperiment):
         task_dataset = initialize_task(self.config.task)
 
         for task in tqdm(task_dataset):
-            if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
+            if int(task.env) in [37]:# list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
                 print("Running task:", task.env)
                 self.plan_env(
                     task=task,
@@ -51,13 +52,23 @@ class BBoxExperiment(BaseExperiment):
         planner.reset()
         env.dt = planner.dt # match frequency
 
-        # initialize
+        # ground truth
+        gt_data = np.load((experiment_config.task.room_folder + str(task.env) + '/occupancy_grid.npz'), allow_pickle=True)
+        gt_grid = gt_data['arr_0']
+        # make gt_grid conform to planner
+        map_size = planner.world.map_size
+        if gt_grid.shape != map_size:
+            gt = np.zeros(map_size)
+            gt[:min(map_size[0],gt_grid.shape[0]), :min(map_size[1],gt_grid.shape[1])] = gt_grid[:min(map_size[0],gt_grid.shape[0]), :min(map_size[1],gt_grid.shape[1])]
+            gt_grid = gt
+        gt_grid = np.rot90(gt_grid, 2)
+
+        planner_goal = planner.world.state_to_planner(np.array(self.config.goal_loc))
+
+        # Initialize experiment variables
         t = 0
         steps_taken = 0
         state_traj = []
-        gt_obs = [[[obs[0], obs[1], obs[2]],[obs[3], obs[4], obs[5]]] for obs in task.piece_bounds_all]
-        # print("GT obstacles", gt_obs)
-        ground_truth = planner.world.boxes_to_planner_frame(np.array(gt_obs))
         done = False
         collided = False
         misdetected = 0
@@ -66,36 +77,46 @@ class BBoxExperiment(BaseExperiment):
         idx_prev = 0
         plan_fail = 0
 
+        
         while True and not done and not collided:
             state = planner.world.state_to_planner(env._state)
-            # print(f'state at step {steps_taken}: {state}')
-            boxes = perception_model.get_box(observation, experiment_config)
-            # print(boxes)
-            boxes[:,0,:] -= experiment_config.cp
-            boxes[:,1,:] += experiment_config.cp
-            boxes = planner.world.boxes_to_planner_frame(boxes)
-
-            ###########################################################################
-            X = observation[:, (observation[2, :] >0.1)]
-            X = X[:, np.abs(X[1,:]) < 3.9]
-            X = X[:, X[0,:]>0.05]
-            X = X[:, X[0,:] < 7.95]
+            cam_position = torch.tensor([float(env.cam_pos[0]), float(env.cam_pos[1]), float(env.cam_pos[2])])
             
-            X = np.transpose(np.array(X))
-            misdetected += perception_model.count_misdetection(boxes, ground_truth, X, task.piece_bounds_all)
-            # print("Misdetected: ", misdetected)
-            time_misdetected+=1
-            ###########################################################################
+            print(f'state at step {steps_taken}: {state}')
+            # DETECTION
+            pt = time.time()
+            grid = perception_model.get_map(observation, cam_position)
+            print(f'Perception time: {time.time() - pt:.2f}')
 
+            # PLANNING
             st = time.time()
-            res = planner.plan(state, boxes)
+            res = planner.plan(state, planner_goal, grid)
             t+=(time.time() - st)
+            print(f'Planning time: {time.time() - st:.2f}')
 
-            if (steps_taken % 10) == 0 and experiment_config.visualize:
-                planner.show(res[0], true_boxes=np.array(ground_truth))
             steps_taken+=1
-            if len(res[0]) > 1 and not done and not collided:
-                policy_before_trans = np.vstack(res[2])
+
+            misdetected += perception_model.count_misdetected(gt_grid, planner.world.map_design)
+            time_misdetected += 1
+
+            if experiment_config.visualize and steps_taken % 1 == 0:
+                # plot grid and state with plotly
+                fig = go.Figure()
+                free = np.zeros((83,83))
+                free[planner.world.map_design == 0.5] = 0.5
+                fig.add_trace(go.Heatmap(z=gt_grid*5+planner.world.map_design))
+                fig.add_trace(go.Scatter(x=[planner.world.state_to_pixel(state)[1]], y=[planner.world.state_to_pixel(state)[0]], mode='markers', marker=dict(size=10, color='red')))
+                # plot plan in green
+                if len(res['idx_solution']) > 1:
+                    x_waypoints = np.vstack(res['x_waypoints'])
+                    for i in range(len(x_waypoints)-1):
+                        x1, y1 = planner.world.state_to_pixel(x_waypoints[i])
+                        x2, y2 = planner.world.state_to_pixel(x_waypoints[i+1])
+                        fig.add_trace(go.Scatter(x=[y1, y2], y=[x1, x2], mode='lines', line=dict(color='green', width=2)))
+                fig.show()
+
+            if len(res['idx_solution']) > 1 and not done and not collided:
+                policy_before_trans = np.vstack(res['u_waypoints'])
                 policy = (np.array([[0,1],[-1,0]])@policy_before_trans.T).T
                 prev_policy = np.copy(policy)
 
@@ -103,16 +124,13 @@ class BBoxExperiment(BaseExperiment):
                     idx_prev = step
                     state = env._state
                     state_traj.append(planner.world.state_to_planner(state))
-                    for obs in task.piece_bounds_all:
-                        if state[0] < obs[3] and state[0] > obs[0]:
-                            if state[1] < obs[4] and state[1] > obs[1]: 
-                                og_loc = [round(state[0]/0.1)+1 , round((state[1]+4)/0.1)+1]
-                                print("Env: ", str(task.env), " Collision")
-                                collided = True
-                                break
+                    og_loc = planner.world.state_to_pixel(state_traj[-1])
+                    if gt_grid[og_loc[0], og_loc[1]]:
+                        print("Env: ", str(task.env), " Collision")
+                        collided = True
+                        break
                     action = policy[step]
                     observation, reward, done, info = env.step(action)
-
                     t += planner.dt
                     if done:
                         print("Env: ", str(task.env), " Success!")
@@ -121,22 +139,29 @@ class BBoxExperiment(BaseExperiment):
                         print("Env: ", str(task.env), " Collided")
                         break
             else:
-                if (len(prev_policy) > idx_prev+1): 
+                plan_fail += 1
+                if (len(prev_policy) > idx_prev+1): #int(planner.sensor_dt/planner.dt):
+                    # for kk in range(int(planner.sensor_dt/planner.dt)):
                     idx_prev += 1
                     action = prev_policy[idx_prev]
+                    state = env._state
+                    state_traj.append(planner.world.state_to_planner(state))
                     observation, reward, done, info = env.step(action)
                     t += planner.dt
                 else:
-                    action = [0,0]
+                    action = [0,0] # ICS was considered so shouldn't be a problem
+                    state = env._state
+                    state_traj.append(planner.world.state_to_planner(state))
                     observation, reward, done, info = env.step(action)
                     t += planner.dt
                     plan_fail += 1
             if t > 140 or plan_fail > 10:
-                print("Env: ", str(task.env), " Failed")
+                print(f"Env {task.env} Failed at t= {t} with {plan_fail} failed plans")
                 break
         filename = f'{experiment_config.task.room_folder}{task.env}/cp_{experiment_config.cp}_{experiment_config.name}{experiment_config.save_tag}'
-        self.plot_results(filename, state_traj , ground_truth, planner)
-
+        self.plot_results(filename, state_traj , gt_grid, planner)
+        # create_gif([f'{step+1}_map.png' for step in range(steps_taken-1)], 'output.gif')
+        print("misdetected: ", misdetected)
         result = {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
         np.savez_compressed(filename, data=result)
         print(f"Results saved to {filename}.npz")
@@ -144,18 +169,13 @@ class BBoxExperiment(BaseExperiment):
         return result
 
     def plot_results(self, filename, state_traj , ground_truth, sp):
-        fig, ax = sp.world.show(true_boxes=ground_truth)
-        plt.gca().set_aspect('equal', adjustable='box')
+        plt.clf()
+        plt.imshow(ground_truth*5 + sp.world.map_design, cmap='coolwarm')
         if len(state_traj) >0:
-            state_tf = np.squeeze(np.array(state_traj)).T
-            # print('state tf', state_tf.shape)
-            if state_tf.shape == (4,):
-                state_tf = state_tf.reshape((4,1))
-            ax.plot(state_tf[0, :], state_tf[1, :], c='r', linewidth=1, label='state')
-        plt.legend()
-        plt.savefig(filename + f'traj_plot.png')
-        # plt.savefig('plot.png')
-        # plt.show()
+            for state in state_traj:
+                x,y = sp.world.state_to_pixel(state)[1], sp.world.state_to_pixel(state)[0]
+                plt.scatter(x, y, color='red', s=1)
+        plt.savefig(filename + 'traj_plot.png')
     
     def extract_results(self):
         """

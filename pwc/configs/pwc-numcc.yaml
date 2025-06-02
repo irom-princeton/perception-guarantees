@@ -3,6 +3,7 @@ perception:
   config:
     ckpt_path: pwc/perception/numcc/pretrained/numcc_hypersim_550c.pth
     udf_threshold: 1.91
+    visualize_pc: False
 
 nav_sim:
   _target_: pwc.nav_sim.task_env.TaskEnv
@@ -21,7 +22,7 @@ nav_sim:
       camera_thickness: 0.04
     dynamics:
       params_path: pwc/planning/sp_var.pkl
-      dt: 2
+      dt: 0.1
 
     
 #TODO 
@@ -33,32 +34,33 @@ calibration:
   delta: 0.01
 
 experiment:
-  _target_: pwc.experiments.bbox_experiment.BBoxExperiment
+  _target_: pwc.experiments.occ_experiment.OccExperiment
   config:
-    name: pwc-3detr
-    save_tag: _0601
+    name: pwc-numcc
+    save_tag: _0602-moving-cam-mod-subgoal
     description: PWC calibration with 3DETR model
     visualize: False
     num_pc_points: 40000
-    init_state: [0.2,-1,0,0]
-    goal_loc: [7,-2]
+    init_state: [0.5,-1,0,0]
+    goal_loc: [7,-2, 0.5, 0]
     goal_loc_planner_frame: [6,7]
-    cp: 3.0259
+    cp: 1.91
     is_finetune: False
     num_envs: 100
     num_parallel: 10
     task: 
-      path: /home/zm2074/Projects/data/perception-guarantees/task_multiple.pkl
-      room_folder: /home/zm2074/Projects/data/perception-guarantees/rooms_multiple/
-      goal_radius: 1
+      path: /home/zm2074/Projects/data/perception-guarantees/task_1203_rot.pkl
+      room_folder: /home/zm2074/Projects/data/perception-guarantees/room_1203_rot/
+      goal_radius: 1.5
+      init_state: [0.5, -1, 0, 0]
       observation:
         type: rgbd
         rgb:
           x_offset_from_robot_front: 0.05  # no y offset
-          z_offset_from_robot_top: 0.05
+          z_offset_from_robot_top: 0.8
           tilt: 0  # degrees of tilting down towards the floor
           img_w: 662
-          img_h: 376
+          img_h: 662
           aspect: 1.57
           fov: 70  # in PyBullet, this is vertical field of view in degrees
         depth:
@@ -77,23 +79,17 @@ experiment:
 
 
 planning:
-  _target_: pwc.planning.safe_planner.SafePlanner
-  world_box: [[0, 0], [8, 8]]
-  vx_range: [-0.5, 0.5]        # velocity ranges
-  vy_range: [0, 4]
-  sr: 1.0                      # initial clearance
-  init_state: [5, 0.2, 0, 0]   # initial state [x, y, vx, vy]
-  goal_f: [7, -2, 0.5, 0]      # goal location with forrestal coordinates
-  dt: 0.1                      # time resolution for controls
-  sensor_dt: 0.5               # time resolution for perception update
-  r: 3                         # cost threshold for reachability
-  radius: 0.5                  # radius for finding intermediate goals
-  FoV: 60                      # field of view (in degrees)
-  FoV_range: 5                 # can't see beyond 5 meters
-  FoV_close: 1                 # can't see within 1 meter
-  n_samples: 2000
-  max_search_iter: 1000
-  weight: 10                   # weight for cost to go vs. cost to come
+  _target_: pwc.planning.occ_planner.OccPlanner
+  map_size: [83,83]         # square grid map map_res pixels per side
+  room_size: 8.0       # in meters
+  n_samples: 4000      # will get overwritten if load samples
+  r_n: 20.0
+  path_resolution: 0.1
+  sensor_dt: 0.5
+  dt: 0.1
+  rr: 1.0
+  max_search_iter: 10000
   seed: 0
-  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset.pkl
-  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable.pkl
+  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset-4k.pkl
+  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable-4k.pkl
+  verbose: False

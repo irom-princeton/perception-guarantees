@@ -20,16 +20,17 @@ import numpy as np
 import time
 import base64
 from io import BytesIO
+import plotly.io as pio
 
-import numcc.util.misc as misc
+import pwc.perception.numcc.util.misc as misc
 
 from pytorch3d.structures import Pointclouds
 from pytorch3d.vis.plotly_vis import plot_scene
 
-from numcc.src.engine.engine import prepare_data, prepare_data_udf
+from pwc.perception.numcc.src.engine.engine import prepare_data, prepare_data_udf
 from pathlib import Path
 from tqdm import tqdm
-from numcc.src.fns import *
+from pwc.perception.numcc.src.fns import *
 
 import pandas as pd
 from pyntcloud import PyntCloud
@@ -481,6 +482,7 @@ def generate_html_udf(img, seen_xyz, seen_rgb, pred_points, pred_rgb, unseen_xyz
     try:
         fig = plot_scene(clouds, pointcloud_marker_size=pointcloud_marker_size, pointcloud_max_points=20000 * 2)
         fig.update_layout(height=1000, width=1000)
+        pio.show(fig)
         f.write(fig.to_html(full_html=False, include_plotlyjs='cdn'))
     except Exception as e:
         print('writing failed', e)

@@ -69,8 +69,6 @@ class TaskEnv(VanillaEnv):
         """
         Load furniture meshes at specified poses.
 
-        # TODO: skip if no need to switch furniture
-
         Args:
             task (dict): Task dict.
         """

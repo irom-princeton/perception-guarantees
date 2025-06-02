@@ -24,13 +24,13 @@ def initialize_task(task_config): #TODO: support overwriting defaults from confi
         task.observation.camera_pos = {}
         task.observation.cam_not_inside_obs = {}
         task.observation.is_visible = {}
-        task.observation.rgb.x_offset_from_robot_front = 0.05  # no y offset
-        task.observation.rgb.z_offset_from_robot_top = 0.05
+        task.observation.rgb.x_offset_from_robot_front = task_config.observation.rgb.x_offset_from_robot_front  # no y offset
+        task.observation.rgb.z_offset_from_robot_top = task_config.observation.rgb.z_offset_from_robot_top
         task.observation.rgb.tilt = 0  # degrees of tilting down towards the floor
-        task.observation.rgb.img_w = 662
-        task.observation.rgb.img_h = 376
-        task.observation.rgb.aspect = 1.57
-        task.observation.rgb.fov = 70  # in PyBullet, this is vertical field of view in degrees
+        task.observation.rgb.img_w = task_config.observation.rgb.img_w  # width of the image in pixels
+        task.observation.rgb.img_h = task_config.observation.rgb.img_h  # height of the image in pixels
+        task.observation.rgb.aspect = task_config.observation.rgb.aspect  # aspect ratio of the image
+        task.observation.rgb.fov = task_config.observation.rgb.fov  # in PyBullet, this is vertical field of view in degrees
         task.observation.depth.img_w = task.observation.rgb.img_w  # needs to be the same now - assume coming from the same camera
         task.observation.depth.img_h = task.observation.rgb.img_h
         task.observation.lidar.z_offset_from_robot_top = 0.01  # no x/y offset
@@ -39,7 +39,7 @@ def initialize_task(task_config): #TODO: support overwriting defaults from confi
         task.observation.lidar.vertical_fov = 30  # half in one direction, in degree
         task.observation.lidar.max_range = 5 # in meter Anushri changed from 5 to 8
         task.env= task.base_path.split('/')[-1]
-        task.init_state = [0.2,-1,0,0]
+        task.init_state = task_config.init_state
         task.goal_loc = [7, -2]
 
         # grid_data = np.load((task_config.room_folder + str(task.env) + '/occupancy_grid.npz'), allow_pickle=True)

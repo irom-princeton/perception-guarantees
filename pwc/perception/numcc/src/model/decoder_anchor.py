@@ -14,8 +14,8 @@
 
 import torch
 import torch.nn as nn
-from numcc.util.pos_embed import get_2d_sincos_pos_embed
-from numcc.src.layers import DecoderBlockCenters
+from pwc.perception.numcc.util.pos_embed import get_2d_sincos_pos_embed
+from pwc.perception.numcc.src.layers import DecoderBlockCenters
 
 class DecoderPredictCenters(nn.Module):
     def __init__(self,

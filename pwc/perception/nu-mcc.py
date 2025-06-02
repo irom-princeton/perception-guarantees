@@ -12,6 +12,7 @@ from pwc.perception.numcc.src.fns import *
 from pwc.perception.numcc.src.model.nu_mcc import NUMCC
 import timm.optim.optim_factory as optim_factory
 from pwc.perception.numcc.util.misc import NativeScalerWithGradNormCount as NativeScaler
+from pwc.perception.numcc.src.engine.engine_viz import generate_html_udf
 
 from pwc.perception.perception_model import PerceptionModel
 
@@ -23,6 +24,7 @@ class PerceptionNUMCC(PerceptionModel):
 
         self.ckpt_path = config.ckpt_path
         self.udf_threshold = config.udf_threshold
+        self.visualizez_pc = config.visualize_pc
         
         self.load_model()
 
@@ -133,7 +135,7 @@ class PerceptionNUMCC(PerceptionModel):
     def run_viz_udf(self, samples):
 
         seen_xyz, valid_seen_xyz, query_xyz, unseen_rgb, labels, seen_images, gt_fps_xyz, seen_xyz_hr, valid_seen_xyz_hr = prepare_data_udf(samples, self.device, is_train=False, is_viz=True, args=self.numcc_args)
-
+        seen_images_no_preprocess = seen_images.clone()
         with torch.no_grad():
             seen_images_hr = None
             
@@ -216,7 +218,25 @@ class PerceptionNUMCC(PerceptionModel):
             # points = move_points(model, points, seen_points, valid_seen, fea, up_grid_fea, args, n_iter=args.udf_n_iter)
             pts = points.detach().squeeze(0).cpu().numpy()
             pred_points = np.append(pred_points, pts, axis = 0)
-            
+        
+        img = (seen_images_no_preprocess[0].permute(1, 2, 0) * 255).cpu().numpy().copy().astype(np.uint8)
+        if self.visualizez_pc:
+            with open('nonlinear_scale.html', 'a') as f:
+                generate_html_udf(
+                    img,
+                    seen_xyz, seen_images,
+                    pred_points,
+                    np.zeros_like(pred_points), # dummy
+                    query_xyz,
+                    f,
+                    gt_xyz=None,
+                    gt_rgb=None,
+                    mesh_xyz=None,
+                    centers = centers_xyz,
+                    fn_pc=None,
+                    fn_pc_seen = None,
+                    fn_pc_gt=None
+                )
             
         return pred_points, seen_xyz
     

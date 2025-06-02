@@ -23,17 +23,17 @@ import torch
 import torch.backends.cudnn as cudnn
 import timm.optim.optim_factory as optim_factory
 
-import numcc.util.misc as misc
-from numcc.src.model.nu_mcc import NUMCC
-from numcc.util.misc import NativeScalerWithGradNormCount as NativeScaler
-from numcc.util.co3d_dataset import CO3DV2Dataset, co3dv2_collate_fn
-from numcc.util.hypersim_dataset import HyperSimDataset, hypersim_collate_fn
-from numcc.src.engine.engine import train_one_epoch, eval_one_epoch, eval_one_epoch_udf
-from numcc.src.engine.engine_viz import run_viz, run_viz_udf
-from numcc.util.co3d_utils import get_all_dataset_maps
+import pwc.perception.numcc.util.misc as misc
+from pwc.perception.numcc.src.model.nu_mcc import NUMCC
+from pwc.perception.numcc.util.misc import NativeScalerWithGradNormCount as NativeScaler
+from pwc.perception.numcc.util.co3d_dataset import CO3DV2Dataset, co3dv2_collate_fn
+from pwc.perception.numcc.util.hypersim_dataset import HyperSimDataset, hypersim_collate_fn
+from pwc.perception.numcc.src.engine.engine import train_one_epoch, eval_one_epoch, eval_one_epoch_udf
+from pwc.perception.numcc.src.engine.engine_viz import run_viz, run_viz_udf
+from pwc.perception.numcc.util.co3d_utils import get_all_dataset_maps
 
 from pathlib import Path
-from numcc.parser_and_builder import *
+from pwc.perception.numcc.parser_and_builder import *
 import torch.nn as nn
 from pytorch3d.loss import chamfer_distance
 
