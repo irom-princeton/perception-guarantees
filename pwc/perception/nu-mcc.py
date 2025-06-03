@@ -25,6 +25,8 @@ class PerceptionNUMCC(PerceptionModel):
         self.ckpt_path = config.ckpt_path
         self.udf_threshold = config.udf_threshold
         self.visualizez_pc = config.visualize_pc
+        self.floor = config.floor
+        self.ceiling = config.ceiling
         
         self.load_model()
 
@@ -60,7 +62,10 @@ class PerceptionNUMCC(PerceptionModel):
         
         self.model = model
 
-    def get_map(self, pc, cam_position):
+    def get_map(self, input):
+        pc = input['observation']  # pc is a tuple (xyz, img)
+        cam_position = input['cam_position']  # cam_position is a tensor [x, y, z] in the simulator frame
+
         xyz = torch.tensor(pc[0])-cam_position
         # change coordinate system
         forward = xyz[:,:,0]
@@ -106,7 +111,7 @@ class PerceptionNUMCC(PerceptionModel):
 
         if good_points.sum() != 0:
             # filter out ceiling and floor
-            mask = (pc_for_occ[:, 1] > -2 ) & (pc_for_occ[:, 1] < -0.8)
+            mask = (pc_for_occ[:, 1] > self.ceiling ) & (pc_for_occ[:, 1] < self.floor)
             pc_for_occ = pc_for_occ[mask]
         # get rid of the middle dimension
         points_2d = pc_for_occ[:, [0, 2]] # right, forward

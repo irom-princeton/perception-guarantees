@@ -7,7 +7,7 @@ import os
 import torch
 
 from pwc.experiments.base_experiment import BaseExperiment
-from pwc.utils.task_util import initialize_task
+from pwc.utils.task_util import initialize_task, load_and_interpolate_gt
 
 class OccExperiment(BaseExperiment):
     """
@@ -26,7 +26,7 @@ class OccExperiment(BaseExperiment):
         task_dataset = initialize_task(self.config.task)
 
         for task in tqdm(task_dataset):
-            if int(task.env) in [37]:# list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
+            if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
                 print("Running task:", task.env)
                 self.plan_env(
                     task=task,
@@ -53,15 +53,9 @@ class OccExperiment(BaseExperiment):
         env.dt = planner.dt # match frequency
 
         # ground truth
-        gt_data = np.load((experiment_config.task.room_folder + str(task.env) + '/occupancy_grid.npz'), allow_pickle=True)
-        gt_grid = gt_data['arr_0']
-        # make gt_grid conform to planner
         map_size = planner.world.map_size
-        if gt_grid.shape != map_size:
-            gt = np.zeros(map_size)
-            gt[:min(map_size[0],gt_grid.shape[0]), :min(map_size[1],gt_grid.shape[1])] = gt_grid[:min(map_size[0],gt_grid.shape[0]), :min(map_size[1],gt_grid.shape[1])]
-            gt_grid = gt
-        gt_grid = np.rot90(gt_grid, 2)
+        gt_grid = load_and_interpolate_gt(task, map_size)
+
 
         planner_goal = planner.world.state_to_planner(np.array(self.config.goal_loc))
 
@@ -82,11 +76,16 @@ class OccExperiment(BaseExperiment):
             state = planner.world.state_to_planner(env._state)
             cam_position = torch.tensor([float(env.cam_pos[0]), float(env.cam_pos[1]), float(env.cam_pos[2])])
             
-            print(f'state at step {steps_taken}: {state}')
+            input = {
+                'observation': observation,
+                'cam_position': cam_position,
+                'gt_grid': gt_grid,
+            }
+            # print(f'state at step {steps_taken}: {state}')
             # DETECTION
-            pt = time.time()
-            grid = perception_model.get_map(observation, cam_position)
-            print(f'Perception time: {time.time() - pt:.2f}')
+            # pt = time.time()
+            grid = perception_model.get_map(input)
+            # print(f'Perception time: {time.time() - pt:.2f}')
 
             # PLANNING
             st = time.time()
@@ -102,7 +101,7 @@ class OccExperiment(BaseExperiment):
             if experiment_config.visualize and steps_taken % 1 == 0:
                 # plot grid and state with plotly
                 fig = go.Figure()
-                free = np.zeros((83,83))
+                free = np.zeros(planner.map_size)
                 free[planner.world.map_design == 0.5] = 0.5
                 fig.add_trace(go.Heatmap(z=gt_grid*5+planner.world.map_design))
                 fig.add_trace(go.Scatter(x=[planner.world.state_to_pixel(state)[1]], y=[planner.world.state_to_pixel(state)[0]], mode='markers', marker=dict(size=10, color='red')))
@@ -131,6 +130,7 @@ class OccExperiment(BaseExperiment):
                         break
                     action = policy[step]
                     observation, reward, done, info = env.step(action)
+
                     t += planner.dt
                     if done:
                         print("Env: ", str(task.env), " Success!")
@@ -140,8 +140,7 @@ class OccExperiment(BaseExperiment):
                         break
             else:
                 plan_fail += 1
-                if (len(prev_policy) > idx_prev+1): #int(planner.sensor_dt/planner.dt):
-                    # for kk in range(int(planner.sensor_dt/planner.dt)):
+                if (len(prev_policy) > idx_prev+1): 
                     idx_prev += 1
                     action = prev_policy[idx_prev]
                     state = env._state
@@ -170,12 +169,25 @@ class OccExperiment(BaseExperiment):
 
     def plot_results(self, filename, state_traj , ground_truth, sp):
         plt.clf()
-        plt.imshow(ground_truth*5 + sp.world.map_design, cmap='coolwarm')
+
+        pred_free = sp.world.map_design == 0.5
+        pred_occ = sp.world.map_design == 1
+        true_occ = ground_truth == 1
+
+        blue = np.array([142,186,217])/255.0
+        green = np.array([170, 206, 154])/255.0
+
+        map_rgb = np.ones((sp.map_size[0],sp.map_size[1],3)).astype(float)
+        map_rgb[pred_free] = blue
+        map_rgb[pred_occ] = green
+        map_rgb[true_occ] = 0 # black
+
+        plt.imshow(map_rgb)
         if len(state_traj) >0:
             for state in state_traj:
                 x,y = sp.world.state_to_pixel(state)[1], sp.world.state_to_pixel(state)[0]
                 plt.scatter(x, y, color='red', s=1)
-        plt.savefig(filename + 'traj_plot.png')
+        plt.savefig(filename + '_traj_plot.png')
     
     def extract_results(self):
         """
@@ -209,7 +221,10 @@ class OccExperiment(BaseExperiment):
                 traj_info = data_["data"].item()
                 traj[task.env] = traj_info['trajectory']
                 envs.append(task.env)
-                done.append(int(traj_info['done']))
+                # recompute done
+                success = np.linalg.norm(np.array(traj[task.env][-1,0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
+                done.append(int(success))
+                # done.append(int(traj_info['done']))
                 coll.append(int(traj_info['collision']==False))
                 misdetect.append(traj_info['misdetection'])
 
@@ -218,9 +233,9 @@ class OccExperiment(BaseExperiment):
                 dist_from_goal += np.linalg.norm(np.array(self.config.goal_loc[0:2])-np.array(self.config.init_state[0:2]))
             else:
                 if done[i] == 1:
-                    traj_length+= np.sum(np.linalg.norm(np.array(traj[env][:-1,0,0:2]) - np.array(traj[env][1:,0, 0:2]), axis=1))
+                    traj_length+= np.sum(np.linalg.norm(np.array(traj[env][:-1,0:2]) - np.array(traj[env][1:,0:2]), axis=1))
                 if done[i] == 0:
-                    dist_from_goal += np.linalg.norm(np.array(traj[env][-1,0,0:2]-np.array(self.config.goal_loc_planner_frame)))-1
+                    dist_from_goal += np.linalg.norm(np.array(traj[env][-1,0:2]-np.array(self.config.goal_loc_planner_frame)))-1
 
         print("Average trajectory length: ", traj_length/np.sum(done))
         print("Successful task completion: ", np.mean(done))

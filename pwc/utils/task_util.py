@@ -1,5 +1,6 @@
 import pickle
 import numpy as np
+from scipy.ndimage import zoom
 
 def initialize_task(task_config): #TODO: support overwriting defaults from config
     """
@@ -15,7 +16,7 @@ def initialize_task(task_config): #TODO: support overwriting defaults from confi
         # task = random.choice(task_dataset)
 
         # Initialize task
-        task.goal_radius = 1
+        task.goal_radius = task_config.goal_radius  # in meters
         task.observation = {}
         task.observation.type = task_config.observation.type  # 'rgb' or 'lidar' or 'rgbd'
         task.observation.rgb = {}
@@ -42,8 +43,23 @@ def initialize_task(task_config): #TODO: support overwriting defaults from confi
         task.init_state = task_config.init_state
         task.goal_loc = [7, -2]
 
-        # grid_data = np.load((task_config.room_folder + str(task.env) + '/occupancy_grid.npz'), allow_pickle=True)
-        # occupancy_grid = grid_data['arr_0']
-        # task.occupancy_grid = occupancy_grid
+        
 
     return task_dataset
+
+def load_and_interpolate_gt(task, map_size):
+    # Load the occupancy grid
+    grid_data = np.load(task.base_path + '/occupancy_grid.npz', allow_pickle=True)
+    gt_grid = grid_data['arr_0']
+
+    # Resize gt_grid to match planner's map_size using bilinear interpolation
+    if gt_grid.shape != map_size:
+        zoom_factors = (
+            map_size[0] / gt_grid.shape[0],
+            map_size[1] / gt_grid.shape[1],
+        )
+        gt_grid = zoom(gt_grid, zoom=zoom_factors, order=1)  # order=1: bilinear interpolation
+
+    gt_grid = np.rot90(gt_grid, 2)
+    
+    return gt_grid

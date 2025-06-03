@@ -47,7 +47,7 @@ class VanillaEnv():
         self.ground_rgba = config.room.ground_rgba
         self.back_wall_rgba = self.left_wall_rgba = self.right_wall_rgba = self.front_wall_rgba = config.room.wall_rgba
 
-        # Robot dimensions TODO: get Go1 dimensions
+        # Robot dimensions
         self.robot_half_dim = config.robot.half_dim  # (x, y, z) half dimensions
         self.robot_com_height = self.robot_half_dim[2]
         self.lidar_height = config.robot.lidar_height  # height of LiDAR above robot top
@@ -188,8 +188,8 @@ class VanillaEnv():
         )
 
         # Get Image
-        far = 5
-        near = 1
+        far = 1000.0  # far plane
+        near = 0.01
         projection_matrix = self._p.computeProjectionMatrixFOV(
             fov=rgb_cfg.fov, aspect=rgb_cfg.aspect, nearVal=near,
             farVal=far
@@ -216,7 +216,8 @@ class VanillaEnv():
                                       flags=self._p.ER_NO_SEGMENTATION_MASK, shadow=1,
                                       lightDirection=[1, 1, 1])
         depth = np.array(image_arr[3])
-        # depth = median_filter(depth, 4)
+        if organized:
+            depth = median_filter(depth, 4)
 
 
         # create a 4x4 transform matrix that goes from pixel coordinates (and depth values) to world coordinates
@@ -233,7 +234,8 @@ class VanillaEnv():
 
         pixels = np.stack([x, y, z, h], axis=1)
         # filter out "infinite" depths
-        pixels[z > 0.9999] = 0 #np.inf
+        if not organized:
+            pixels[z > 0.9999] = 0 #np.inf
         pixels[:, 2] = 2 * pixels[:, 2] - 1
 
         # turn pixels to world coordinates

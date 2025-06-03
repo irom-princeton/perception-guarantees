@@ -1,14 +1,10 @@
 perception: 
-  _target_: pwc.perception.nu-mcc.PerceptionNUMCC
+  _target_: pwc.perception.gt_perception.PerceptionGT
   config:
-    ckpt_path: pwc/perception/numcc/pretrained/numcc_hypersim_550c.pth
-    udf_threshold: 1.91
-    visualize_pc: False
-    floor: -0.8
-    ceiling: -2
+
 
 nav_sim:
-  _target_: pwc.nav_sim.task_env.TaskEnv
+  _target_: pwc.nav_sim.base_env.BaseEnv
   render: False
   config:
     mode: experiment # experiment or calibration
@@ -27,19 +23,37 @@ nav_sim:
       dt: 0.1
 
     
-#TODO 
-calibration:
-  _target_: pwc.calibration.PwC.PwC
-  name: PwC
-  calibration_dataset_base_path: /media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/
-  epsilon: 0.15
-  delta: 0.01
+
+
+planning:
+  _target_: pwc.planning.occ_planner.OccPlanner
+  config:
+    map_size: [120,120]         # square grid map map_res pixels per side
+    room_size: 8.0       # in meters
+    n_samples: 4000      # will get overwritten if load samples
+    r_n: 20.0
+    path_resolution: 0.1
+    sensor_dt: 0.5
+    dt: 0.1
+    max_search_iter: 10000
+    seed: 0
+    Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset-4k.pkl
+    reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable-4k.pkl
+    verbose: False
+    world_config:
+      room_size: 8.0 #meters
+      fov: 60 #degrees
+      sensor_range_near: 1.5 #meters
+      sensor_range_far: 4.8 #meters
+      path_resolution: 0.1
+      rr: 1.0
+      sr: 1.5
 
 experiment:
   _target_: pwc.experiments.occ_experiment.OccExperiment
   config:
-    name: pwc-numcc
-    save_tag: _0602-9pm
+    name: planner-test
+    save_tag: _0603-map120
     description: PWC calibration with 3DETR model
     visualize: False
     num_pc_points: 40000
@@ -77,29 +91,3 @@ experiment:
         camera_pos: {}
         cam_not_inside_obs: {}
         is_visible: {}
-
-
-
-planning:
-  _target_: pwc.planning.occ_planner.OccPlanner
-  config:
-    map_size: [83,83]         # square grid map map_res pixels per side
-    room_size: 8.0       # in meters
-    n_samples: 4000      # will get overwritten if load samples
-    r_n: 20.0
-    path_resolution: 0.1
-    sensor_dt: 0.5
-    dt: 0.1
-    max_search_iter: 10000
-    seed: 0
-    Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset-4k.pkl
-    reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable-4k.pkl
-    verbose: False
-    world_config:
-      room_size: 8.0 #meters
-      fov: 60 #degrees
-      sensor_range_near: 1.5 #meters
-      sensor_range_far: 4.8 #meters
-      path_resolution: 0.1
-      rr: 1.0
-      sr: 1.5

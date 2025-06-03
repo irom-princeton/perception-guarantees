@@ -2,7 +2,7 @@ perception:
   _target_: pwc.perception.nu-mcc.PerceptionNUMCC
   config:
     ckpt_path: pwc/perception/numcc/pretrained/numcc_hypersim_550c.pth
-    udf_threshold: 1.91
+    udf_threshold: 1.34
     visualize_pc: False
     floor: -0.8
     ceiling: -2
@@ -38,15 +38,15 @@ calibration:
 experiment:
   _target_: pwc.experiments.occ_experiment.OccExperiment
   config:
-    name: pwc-numcc
-    save_tag: _0602-9pm
+    name: cpavg-numcc
+    save_tag: _0603
     description: PWC calibration with 3DETR model
     visualize: False
     num_pc_points: 40000
     init_state: [0.5,-1,0,0]
     goal_loc: [7,-2, 0.5, 0]
     goal_loc_planner_frame: [6,7]
-    cp: 1.91
+    cp: 1.34
     is_finetune: False
     num_envs: 100
     num_parallel: 10
@@ -82,24 +82,16 @@ experiment:
 
 planning:
   _target_: pwc.planning.occ_planner.OccPlanner
-  config:
-    map_size: [83,83]         # square grid map map_res pixels per side
-    room_size: 8.0       # in meters
-    n_samples: 4000      # will get overwritten if load samples
-    r_n: 20.0
-    path_resolution: 0.1
-    sensor_dt: 0.5
-    dt: 0.1
-    max_search_iter: 10000
-    seed: 0
-    Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset-4k.pkl
-    reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable-4k.pkl
-    verbose: False
-    world_config:
-      room_size: 8.0 #meters
-      fov: 60 #degrees
-      sensor_range_near: 1.5 #meters
-      sensor_range_far: 4.8 #meters
-      path_resolution: 0.1
-      rr: 1.0
-      sr: 1.5
+  map_size: [83,83]         # square grid map map_res pixels per side
+  room_size: 8.0       # in meters
+  n_samples: 4000      # will get overwritten if load samples
+  r_n: 20.0
+  path_resolution: 0.1
+  sensor_dt: 0.5
+  dt: 0.1
+  rr: 1.0
+  max_search_iter: 10000
+  seed: 0
+  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset-4k.pkl
+  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable-4k.pkl
+  verbose: False

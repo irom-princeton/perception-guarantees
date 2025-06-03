@@ -25,19 +25,19 @@ expA = expm(A*10**3)
 class World():
     def __init__(self, 
                  map_design: np.ndarray,
-                 room_size: float = 8.0, #meters
-                 fov: int = 60, #degrees
-                 sensor_range: int = 48, #pixels
-                 path_resolution: float = 0.1,
-                 rr: float = 1.0,
+                 world_config: None,
                 ):
         self.map_design = map_design
         self.map_size = map_design.shape
-        self.room_size = room_size
-        self.fov = fov
-        self.sensor_range = sensor_range
-        self.path_resolution = path_resolution
-        self.rr = rr
+        self.room_size = world_config.room_size
+        self.fov = world_config.fov
+        self.sensor_range_near = int(np.ceil(world_config.sensor_range_near*self.map_size[0]/self.room_size))
+        self.sensor_range_far = int(np.ceil(world_config.sensor_range_far*self.map_size[0]/self.room_size))
+        self.path_resolution = int(np.ceil(world_config.path_resolution))
+        self.rr = world_config.rr
+        self.sr = int(np.ceil(world_config.sr*self.map_size[0]/self.room_size))
+        
+        # initialize
         self.counter = 0
     
     def update(self, new_grid: np.ndarray, state: np.ndarray) -> 'World':
@@ -51,14 +51,14 @@ class World():
             World: Updated world
         """
         
-        def loss_mask(camera_pose, fov=self.fov, grid = np.zeros((83,83))):
+        def loss_mask(camera_pose, fov=self.fov, grid = np.zeros(self.map_size), near=self.sensor_range_near, far=self.sensor_range_far): #TODO: hard code
             # camera pose in sim frame
             mask_grid = np.ones_like(grid)
             # draw fov from camera_pose
             # convert to grid frame
-            camera_pose = np.array([8-camera_pose[0], 4-camera_pose[1]])
+            camera_pose = np.array([self.room_size-camera_pose[0], self.room_size/2-camera_pose[1]])
             # convert campera pose to index
-            camera_pose = (camera_pose*83/8).astype(int)
+            camera_pose = (camera_pose*self.map_size[0]/self.room_size).astype(int)
 
             for i in range(mask_grid.shape[0]):
                 for j in range(mask_grid.shape[1]):
@@ -68,7 +68,7 @@ class World():
                     angle = np.arctan2(y, x)
                     angle = np.rad2deg(angle)
                     angle = (angle + 360) % 360
-                    if (angle >  - fov/2) and (angle < + fov/2) and 15<distance<48:
+                    if (angle >  - fov/2) and (angle < + fov/2) and near<distance<far:
                         mask_grid[i, j] = 0
 
             return mask_grid
@@ -96,9 +96,9 @@ class World():
             self.map_design = new_grid
             # add a circle of free space around the observer
             pix_loc = self.state_to_pixel(state)
-            for i in range(-15, 16):
-                for j in range(-15, 16):
-                    if (np.linalg.norm(np.array([i,j])) < 15 and 
+            for i in range(-self.sr, self.sr+1):
+                for j in range(-self.sr, self.sr+1):
+                    if (np.linalg.norm(np.array([i,j])) < self.sr and 
                         pix_loc[0]+i >= 0 and pix_loc[0]+i < self.map_size[0] and 
                         pix_loc[1]+j >= 0 and pix_loc[1]+j < self.map_size[1]):
                         self.map_design[pix_loc[0]+i, pix_loc[1]+j] = 0.5
@@ -145,13 +145,13 @@ class World():
                         break
                     if grid[x][y] == 1:  # 1 means occupied (obstacle)
                         break  # Stop if obstacle is found, everything behind it is occluded
-                    if np.sqrt((x-x0)**2+(y-y0)**2)<15:
+                    if np.sqrt((x-x0)**2+(y-y0)**2)<self.sensor_range_near:
                         continue
                     visible_cells.add((x, y))  # Otherwise, mark as visible
 
             return visible_cells
         
-        visible_cells = compute_occlusion(self.map_design, state, self.sensor_range)
+        visible_cells = compute_occlusion(self.map_design, state, self.sensor_range_far)
         pred_occ = self.map_design.copy().astype(float)
         for (x,y) in visible_cells:
             pred_occ[x][y] = 0.5
@@ -275,19 +275,7 @@ class World():
 class OccPlanner():
     def __init__(
         self,
-        map_size: list = (83, 83), 
-        room_size: float = 8.0,
-        n_samples: int = 1000,
-        r_n: float = 20.0,
-        path_resolution: float = 0.1,
-        sensor_dt: float = 1,
-        dt: float = 0.1,
-        rr: float = 1.0,
-        max_search_iter: int = 10000,
-        seed: int = 0,
-        Pset_path: str = None,
-        reachable_path: str = None,
-        verbose=False
+        config: None,
     ):
         """
         Fast Marching Tree Path Planner 
@@ -303,25 +291,25 @@ class OccPlanner():
         """
 
         # hyperparameters
-        self.path_resolution = path_resolution
-        self.sensor_dt = sensor_dt
-        self.dt = dt
-        self.rr = rr
-        self.n_samples = n_samples
-        self.r_n = r_n
-        self.max_search_iter = max_search_iter
-        self.prng = np.random.RandomState(seed)  # initialize PRNG
+        self.path_resolution = config.path_resolution
+        self.sensor_dt = config.sensor_dt
+        self.dt = config.dt
+        self.n_samples = config.n_samples
+        self.r_n = config.r_n
+        self.max_search_iter = config.max_search_iter
+        self.prng = np.random.RandomState(config.seed)  # initialize PRNG
 
-        self.room_size = room_size
-        self.map_size = map_size
+        self.room_size = config.room_size
+        self.map_size = config.map_size
     
         '''Load pre-computed reachable sets'''
-        if Pset_path is not None and reachable_path is not None:
-            self.Pset = pickle.load(open(Pset_path, 'rb'))
-            self.reachable = pickle.load(open(reachable_path, 'rb'))
+        if config.Pset_path is not None and config.reachable_path is not None:
+            self.Pset = pickle.load(open(config.Pset_path, 'rb'))
+            self.reachable = pickle.load(open(config.reachable_path, 'rb'))
             self.n_samples = len(self.Pset)
 
-        self.verbose = verbose
+        self.verbose = config.verbose
+        self.world_config = config.world_config
 
         self.reset()
 
@@ -330,7 +318,7 @@ class OccPlanner():
         self.node_list = list()
         # construct obstacle tree
         self.world = World(map_design=np.ones(self.map_size),
-                           room_size=self.room_size,)
+                           world_config=self.world_config,)
 
         
     def goal_inter(self, start_id: int) -> np.ndarray:
@@ -428,7 +416,7 @@ class OccPlanner():
         ft = time.time()
         self.world = self.world.update(map_design, start)
         self.world = self.world.occlusion(self.world.state_to_pixel(start[0:2]))
-        print(f"Filter time: {time.time()-ft:.2f} seconds")
+        # print(f"Filter time: {time.time()-ft:.2f} seconds")
         # initialize
         self.bool_valid = np.zeros(len(self.Pset), dtype=bool)
         
