@@ -223,8 +223,16 @@ class OccExperiment(BaseExperiment):
                 envs.append(task.env)
                 # recompute done
                 success = np.linalg.norm(np.array(traj[task.env][-1,0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
+
+                goal_reached = np.linalg.norm(np.array(traj[task.env][:,0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
+                if np.any(goal_reached):
+                    success = True
+                    first_goal_idx = np.where(goal_reached)[0][0]
+                    traj[env] = traj[env][:first_goal_idx+1]
                 done.append(int(success))
+
                 # done.append(int(traj_info['done']))
+                print(f"Env: {task.env}, Success: {success}, Done: {done[-1]}")
                 coll.append(int(traj_info['collision']==False))
                 misdetect.append(traj_info['misdetection'])
 
