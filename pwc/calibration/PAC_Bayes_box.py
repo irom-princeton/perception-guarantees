@@ -74,7 +74,7 @@ class PACBayesBox(Calibration):
         prior.init_logvar(-10)
         prior.to(self.device)
 
-        print("Trainig prior...")
+        print("Training prior...")
         self.train(model=prior,
                    dataloader=loaders['prior'],
                    loss_fn=self.loss_prior,
@@ -90,7 +90,7 @@ class PACBayesBox(Calibration):
         posterior = MLPModel(num_in, num_out)
         posterior.load_state_dict(deepcopy(prior.state_dict()))
         posterior.to(self.device)
-
+        print("Training posterior...")
         self.train(model=posterior,
                    dataloader=loaders['post'],
                    loss_fn=self.loss_posterior,
@@ -190,7 +190,7 @@ class PACBayesBox(Calibration):
         loss = box_loss_diff(outputs + boxes_3detr, boxes_gt, self.w1, self.w2, self.w3, loss_mask)
         loss_true, not_enclosed = box_loss_true(outputs + boxes_3detr, boxes_gt, loss_mask, 0.01)
 
-        reg = PAC_Bayes_regularizer(model, self.prior, self.N, self.delta, self.device)
+        reg = PAC_Bayes_regularizer(model, self.prior, self.config.N, self.config.delta, self.device)
         loss += torch.sqrt(reg / 2)
 
         return loss, loss_true
@@ -202,7 +202,7 @@ if __name__ == "__main__":
     config = OmegaConf.create({
         "batch_size": 100,
         "learning_rate": 1e-4,
-        "prior_num_epochs": 100,
+        "prior_num_epochs": 5,
         "prior_lr": 0.01,
         "posterior_num_epochs": 1000,
         "posterior_lr": 1e-4,
