@@ -89,9 +89,9 @@ def box_loss_diff(
     # Mask loss in locations where object was not visible
     losses = torch.mul(loss_mask, losses.view((B, K,N )))
 
-    # # Take max across locations and objects
-    # losses = losses.amax(dim=1)
-    # losses = losses.amax(dim=1)
+    # Take max across locations and objects
+    losses = losses.amax(dim=1)
+    losses = losses.amax(dim=1)
 
     # # Take max across locations and objects
     # losses = losses.mean(dim=1)

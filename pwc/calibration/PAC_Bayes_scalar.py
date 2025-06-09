@@ -7,7 +7,7 @@ from omegaconf import OmegaConf
 
 from pwc.calibration.base_calibration import Calibration
 
-from pwc.perception.models.model_perception import MLPModel
+from pwc.perception.models.model_inflation import InflationModel
 from pwc.utils.loss_fn import box_loss_diff, box_loss_true
 from pwc.utils.pc_dataset import PointCloudDataset
 from pwc.utils.pac_util import PAC_Bayes_regularizer
@@ -45,7 +45,7 @@ class PACBayesBox(Calibration):
 
         if self.config.use_wandb:
             wandb.init(
-                project="pac-bayes-calibration",
+                project="pac-bayes-calibration-scalar",
                 name=self.name,
                 config={**self.config},
             )
@@ -73,7 +73,7 @@ class PACBayesBox(Calibration):
         num_out = (self.config.num_objects,2,3) # 5 boxess * bbox corner representation
 
         #--------Prior Model--------
-        prior = MLPModel(num_in, num_out)
+        prior = InflationModel()
         prior.init_logvar(-10)
         prior.to(self.device)
 
@@ -90,7 +90,7 @@ class PACBayesBox(Calibration):
         
         # --------Posterior model--------
 
-        posterior = MLPModel(num_in, num_out)
+        posterior = InflationModel()
         posterior.load_state_dict(deepcopy(prior.state_dict()))
         posterior.to(self.device)
         print("Training posterior...")
@@ -108,12 +108,12 @@ class PACBayesBox(Calibration):
             os.makedirs(save_dir)
         torch.save(posterior.state_dict(), "trained_models/perception_model")
         if self.config.verbose:
-            print(f'Saved trained model to trained_models/perception_model.')
-        
+            print('Saved trained model.')
+        ###################################################################
 
 
     def train(self,
-              model: MLPModel,
+              model: InflationModel,
               dataloader: DataLoader,
               loss_fn: callable,
               training_config: dict,):
@@ -133,7 +133,6 @@ class PACBayesBox(Calibration):
             #------Iterate over the DataLoader for training data------
             for i, data in enumerate(dataloader, 0):
                 inputs, targets, loss_mask = data
-                # print(inputs.shape, loss_mask.shape, targets["bboxes_3detr"].shape, targets["bboxes_gt"].shape)
                 inputs = inputs.to(self.device)
                 boxes_3detr = targets["bboxes_3detr"].to(self.device)
                 boxes_gt = targets["bboxes_gt"].to(self.device)
@@ -141,8 +140,12 @@ class PACBayesBox(Calibration):
 
                 # forward pass
                 model.init_xi()
-                outputs = model(inputs)
-                loss, loss_true = loss_fn(model, outputs, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
+                outputs = model()
+
+                inflation_factor = outputs*torch.ones_like(boxes_3detr)
+                inflation_factor[:,:,:,0,:] *= -1.0
+
+                loss, loss_true = loss_fn(model, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
 
                 # backward pass
                 optimizer.zero_grad()
@@ -182,7 +185,7 @@ class PACBayesBox(Calibration):
         return loss, loss_true
     
     def loss_posterior(self,
-                       model: MLPModel,
+                       model: InflationModel,
                        outputs: torch.Tensor,
                        boxes_3detr: torch.Tensor,
                        boxes_gt: torch.Tensor,
@@ -213,7 +216,7 @@ if __name__ == "__main__":
         "w1": 1.0,
         "w2": 0.1,
         "w3": 1.0,
-        "N_total": 400,  # Total number of samples for calibration
+        "N_total": 400,  # Total number of samples in the dataset
         "N": 350,  # Number of samples for PAC-Bayes
         "num_objects": 5,  # Number of objects in the dataset
         "delta": 0.01,  # Confidence level for PAC-Bayes
