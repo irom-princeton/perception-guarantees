@@ -9,6 +9,7 @@ def main(cfg):
     Main function to run the evaluation script.
     """
     perception_model = instantiate(cfg.perception)
+    calibration_method = instantiate(cfg.calibration)
     env = instantiate(cfg.nav_sim)
     planner = instantiate(cfg.planning)
     experiment = instantiate(cfg.experiment)
@@ -16,6 +17,7 @@ def main(cfg):
     experiment.run(
         env=env,
         perception_model=perception_model,
+        calibration_method=calibration_method,
         planner=planner,
     )
 

@@ -50,8 +50,9 @@ class StochasticLayer(nn.Module):
         xi = stdev.data.new(stdev.size()).normal_(0, 1)
         self.stdev_xi = stdev * xi
 
-    def forward(self):
-        rand_sample = torch.randn(1).to(device=self.mu.device)
+    def forward(self, x):
+        # x: shape of the output
+        rand_sample = torch.randn(x).to(device=self.mu.device)
         output = self.mu + torch.exp(0.5 * self.logvar) * rand_sample
         return output
 
@@ -115,13 +116,15 @@ class StochasticModel(nn.Module):
         return kl_div
 
 class InflationModel(StochasticModel):
-    def __init__(self):
+    def __init__(self, weight_size=1):
         super(InflationModel, self).__init__()
 
-        self.layer = StochasticLayer(1)
+        # stochastic layer
+        self.layer = StochasticLayer(weights_size=weight_size)
 
-    def forward(self):
-        output = self.layer()
+    def forward(self, x):
+        # get output
+        output = self.layer(x)
         return output
 
 

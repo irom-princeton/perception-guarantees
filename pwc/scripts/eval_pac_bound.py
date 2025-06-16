@@ -10,7 +10,7 @@ def main(cfg):
     """
     # instantiate the calibration method
     calibration_method = instantiate(cfg.calibration)
-    calibration_method.calibrate()
+    calibration_method.evaluate()
 
 
 if __name__ == "__main__":
@@ -31,8 +31,6 @@ if __name__ == "__main__":
     hydra.core.global_hydra.GlobalHydra.instance().clear()
     hydra.initialize(config_path=f"../configs")
     cfg = hydra.compose(config_name=args.config_name)
-    # print the config
-    print(OmegaConf.to_yaml(cfg))
 
     # run the main function
     main(

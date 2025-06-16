@@ -4,6 +4,7 @@ from copy import deepcopy
 import torch
 from torch.utils.data import DataLoader, random_split, Subset
 from omegaconf import OmegaConf
+from pathlib import Path
 
 from pwc.calibration.base_calibration import Calibration
 
@@ -12,13 +13,15 @@ from pwc.utils.loss_fn import box_loss_diff, box_loss_true
 from pwc.utils.pc_dataset import PointCloudDataset
 from pwc.utils.pac_util import PAC_Bayes_regularizer
 
-class PACBayesBox(Calibration):
+class PACBayesScalar(Calibration):
     """
     PAC-Bayes calibration approach.
     Trains a bounding box predictor on top of 3DETR output features.
     """
 
-    def __init__(self, name: str = "PACBayes"):
+    def __init__(self, 
+                 name: str = "PACBayes-scalar",
+                 config: OmegaConf = None):
         """
         Initialize the PAC-Bayes calibration method.
 
@@ -28,8 +31,17 @@ class PACBayesBox(Calibration):
         super().__init__(name)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+        self.config = config
+        if 'runtime_config' in config:
+            self.runtime_config = config.runtime_config
+            #--------Load model--------#
+            state_dict = torch.load(self.runtime_config.trained_model_path, map_location=self.device)
+            self.model = InflationModel(weight_size=config.weight_size)
+            self.model.load_state_dict(state_dict)
+            self.model.to(self.device)
+            self.model.eval()
+
     def calibrate(self, 
-                  calibration_dataset_base_path: str = "/media/zm2074/Data Drive/data/perception-guarantees/PAC_Bayes_calibration/calibrate_4k_rot/data/",
                   config: OmegaConf = None):
         """
         Calibrate the predictions based on the targets.
@@ -38,16 +50,21 @@ class PACBayesBox(Calibration):
             calibration_dataset_base_path (str): Path to the folder for calibration dataset.
         """
 
-        self.config = config
-        self.w1 = torch.tensor(self.config.w1).to(self.device)
-        self.w2 = torch.tensor(self.config.w2).to(self.device)
-        self.w3 = torch.tensor(self.config.w3).to(self.device)
+        if config is not None:
+            self.training_config = config
+        else:
+            self.training_config = self.config.training_config
+        self.w1 = torch.tensor(self.training_config.w1).to(self.device)
+        self.w2 = torch.tensor(self.training_config.w2).to(self.device)
+        self.w3 = torch.tensor(self.training_config.w3).to(self.device)
 
-        if self.config.use_wandb:
+        calibration_dataset_base_path = self.training_config.dataset_base_path
+
+        if self.training_config.use_wandb:
             wandb.init(
-                project="pac-bayes-calibration-scalar",
-                name=self.name,
-                config={**self.config},
+                project="PwC-PAC-0613",
+                name=self.training_config.save_name,
+                config={**self.training_config},
             )
 
         # --------Initialize dataset and dataloader--------
@@ -55,12 +72,12 @@ class PACBayesBox(Calibration):
                                 calibration_dataset_base_path+'bbox_labels.pt',
                                 calibration_dataset_base_path+'loss_mask.pt')
         
-        subset = Subset(dataset, range(self.config.N_total))  # Use only the first N_total samples
+        subset = Subset(dataset, range(self.training_config.N_total))  # Use only the first N_total samples
         dataset = subset.dataset
         
-        prior_data, post_data = random_split(dataset, [len(dataset) - self.config.N, self.config.N])
+        prior_data, post_data = random_split(dataset, [len(dataset) - self.training_config.N, self.training_config.N])
 
-        params = {'batch_size': self.config.batch_size,
+        params = {'batch_size': self.training_config.batch_size,
                     'shuffle': False}
 
         loaders = {
@@ -68,13 +85,15 @@ class PACBayesBox(Calibration):
             'post': DataLoader(post_data, **params)
         }
 
-        # --------Model shape setup--------
-        num_in = dataset.feature_dims[0]*dataset.feature_dims[1]
-        num_out = (self.config.num_objects,2,3) # 5 boxess * bbox corner representation
-
+        #--------Create save directory--------
+        save_dir = Path(__file__).parents[1] / "perception" / "models" / "trained_models"
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+            
         #--------Prior Model--------
-        prior = InflationModel()
-        prior.init_logvar(-10)
+        prior = InflationModel(self.config.weight_size)
+        prior.init_logvar(-4)
+        # prior.init_mu(-10) # initializing mu
         prior.to(self.device)
 
         print("Training prior...")
@@ -82,15 +101,18 @@ class PACBayesBox(Calibration):
                    dataloader=loaders['prior'],
                    loss_fn=self.loss_prior,
                    training_config={
-                       'num_epochs': self.config.prior_num_epochs,
-                       'lr': self.config.prior_lr,})
+                       'num_epochs': self.training_config.prior_num_epochs,
+                       'lr': self.training_config.prior_lr,})
         
-        prior.init_logvar(-5)
         self.prior = prior
+        print(f"Prior inflation: {prior.layer.mu}")
+        torch.save(prior.state_dict(), f"{save_dir}/{self.training_config.save_name}_prior.pth")
+        if self.training_config.verbose:
+            print(f'Saved trained prior model to {save_dir}/{self.training_config.save_name}_prior.pth.')
         
         # --------Posterior model--------
 
-        posterior = InflationModel()
+        posterior = InflationModel(self.config.weight_size)
         posterior.load_state_dict(deepcopy(prior.state_dict()))
         posterior.to(self.device)
         print("Training posterior...")
@@ -98,18 +120,17 @@ class PACBayesBox(Calibration):
                    dataloader=loaders['post'],
                    loss_fn=self.loss_posterior,
                    training_config={
-                       'num_epochs': self.config.posterior_num_epochs,
-                       'lr': self.config.posterior_lr,})
+                       'num_epochs': self.training_config.posterior_num_epochs,
+                       'lr': self.training_config.posterior_lr,})
 
+        print(f"Posterior inflation: {posterior.layer.mu}")
         
         # Save model
-        save_dir = calibration_dataset_base_path + "trained_models/"
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        torch.save(posterior.state_dict(), "trained_models/perception_model")
-        if self.config.verbose:
-            print('Saved trained model.')
-        ###################################################################
+
+        torch.save(posterior.state_dict(), f"{save_dir}/{self.training_config.save_name}_posterior.pth")
+        if self.training_config.verbose:
+            print(f'Saved trained posterior model to {save_dir}/{self.training_config.save_name}_posterior.pth.')
+        
 
 
     def train(self,
@@ -140,9 +161,11 @@ class PACBayesBox(Calibration):
 
                 # forward pass
                 model.init_xi()
-                outputs = model()
+                outputs = model(boxes_gt.shape[:3]) # B x K x N
 
-                inflation_factor = outputs*torch.ones_like(boxes_3detr)
+                # inflation_factor = outputs*torch.ones_like(boxes_3detr)
+                # inflation_factor[:,:,:,0,:] *= -1.0
+                inflation_factor = outputs[..., None, None] * torch.ones_like(boxes_3detr)
                 inflation_factor[:,:,:,0,:] *= -1.0
 
                 loss, loss_true = loss_fn(model, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
@@ -158,14 +181,14 @@ class PACBayesBox(Calibration):
                 num_batches += 1
             
             #------Optional: log to wandb, print------
-            if self.config.use_wandb:
+            if self.training_config.use_wandb:
                 wandb.log({
                     "epoch": epoch,
                     "loss/train": current_loss / num_batches,
                     "loss/true": current_loss_true / num_batches,
                 })
             print_interval = 1
-            if self.config.verbose and (epoch % print_interval == 0):
+            if self.training_config.verbose and (epoch % print_interval == 0):
                 print("epoch: ", epoch, "; loss: ", '{:02.6f}'.format(current_loss/num_batches),
                     "; loss true: ", '{:02.6f}'.format(current_loss_true / num_batches), end='\r')
 
@@ -197,22 +220,139 @@ class PACBayesBox(Calibration):
         loss = box_loss_diff(outputs + boxes_3detr, boxes_gt, self.w1, self.w2, self.w3, loss_mask)
         loss_true, not_enclosed = box_loss_true(outputs + boxes_3detr, boxes_gt, loss_mask, 0.01)
 
-        reg = PAC_Bayes_regularizer(model, self.prior, self.config.N, self.config.delta, self.device)
+        reg = PAC_Bayes_regularizer(model, self.prior, self.training_config.N, self.training_config.delta, self.device)
         loss += torch.sqrt(reg / 2)
-
+        
         return loss, loss_true
+    
+    def evaluate(self):
+        """
+        Evaluate the bound on the trained model.
+        """
+        self.training_config = self.config.training_config
+        self.w1 = torch.tensor(self.training_config.w1).to(self.device)
+        self.w2 = torch.tensor(self.training_config.w2).to(self.device)
+        self.w3 = torch.tensor(self.training_config.w3).to(self.device)
+
+        calibration_dataset_base_path = self.training_config.dataset_base_path
+
+        # --------Initialize dataset and dataloader--------
+        print("Loading calibration dataset...")
+        dataset = PointCloudDataset(calibration_dataset_base_path+'features.pt',
+                                calibration_dataset_base_path+'bbox_labels.pt',
+                                calibration_dataset_base_path+'loss_mask.pt')
+        
+        subset = Subset(dataset, range(self.training_config.N_total))  # Use only the first N_total samples
+        loader = DataLoader(subset, batch_size=self.training_config.N_total, shuffle=False)
+
+        # --------Load prior and posterior models--------
+        save_dir = Path(__file__).parents[1] / "perception" / "models" / "trained_models"
+        
+        print(f"Loading prior...")
+        prior = InflationModel(self.config.weight_size)
+        prior.load_state_dict(torch.load(f"{save_dir}/{self.training_config.save_name}_prior.pth", map_location=self.device))
+        prior.to(self.device)
+        prior.eval()
+
+        print(f"Loading posterior...")
+        posterior = InflationModel(self.config.weight_size)
+        posterior.load_state_dict(torch.load(f"{save_dir}/{self.training_config.save_name}_posterior.pth", map_location=self.device))
+        posterior.to(self.device)
+        posterior.eval()
+
+        #--------Evaluate the bound--------
+        bound = self.compute_bound(
+            dataloader=loader,
+            posterior=posterior,
+            prior=prior,
+            loss_fn=self.loss_coverage,
+        )
+        print(f"PAC-Bayes bound: {bound.item():.4f}")
+
+
+    def compute_bound(self,
+                      dataloader: DataLoader,
+                      posterior: InflationModel,
+                      prior: InflationModel,
+                      loss_fn: callable,):
+        """
+        Compute the PAC-Bayes bound for the posterior model.
+        """
+        # PAC-Bayes regularizer
+        reg = PAC_Bayes_regularizer(posterior, prior, self.training_config.N, self.training_config.delta, self.device)
+        
+        # Training loss
+        for i, data in enumerate(dataloader, 0):
+            inputs, targets, loss_mask = data
+            inputs = inputs.to(self.device)
+            boxes_3detr = targets["bboxes_3detr"].to(self.device)
+            boxes_gt = targets["bboxes_gt"].to(self.device)
+            loss_mask = loss_mask.to(self.device)
+
+            # forward pass
+            outputs = prior(boxes_gt.shape[:3]) # B x K x N
+            inflation_factor = outputs[..., None, None] * torch.ones_like(boxes_3detr)
+            inflation_factor[:,:,:,0,:] *= -1.0
+
+            not_enclosed = loss_fn(prior, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
+            # take max over states and objects
+            not_enclosed = not_enclosed.amax(dim=1).amax(dim=1)  # B
+        breakpoint()
+        train_loss = not_enclosed.sum().item() / len(not_enclosed)  # average over batch
+            
+        # Compute the PAC-Bayes bound
+        bound = train_loss + torch.sqrt(reg / 2)
+        return bound
+    
+    def loss_coverage(self,
+                      model: None,
+                      outputs: torch.Tensor,
+                      boxes_3detr: torch.Tensor,
+                      boxes_gt: torch.Tensor,
+                      loss_mask: torch.Tensor):
+        """
+        Compute the coverage loss.
+        """
+        mean_loss, not_enclosed = box_loss_true(outputs + boxes_3detr, boxes_gt, loss_mask, 0.01)
+        return not_enclosed
+    
+    def calibrate_runtime(self,
+                          boxes_3detr: torch.Tensor,
+                          config: OmegaConf = None):
+        if config is not None:
+            self.runtime_config = config
+
+        boxes_3detr = boxes_3detr.to(self.device)
+
+        self.model.init_xi()
+        outputs = self.model(boxes_3detr.shape[:1]) # B x K x N # sample inflation factor
+        # outputs = self.model.layer.mu # deterministic inflation factor
+
+        # inflation_factor = outputs*torch.ones_like(boxes_3detr)
+        # inflation_factor[:,0,:] *= -1.0
+        inflation_factor = outputs[..., None, None] * torch.ones_like(boxes_3detr)
+        inflation_factor[:,:,:,0,:] *= -1.0
+        
+        #--------Combine with 3DETR boxes--------
+        boxes = inflation_factor + boxes_3detr
+        boxes = boxes.cpu().detach().numpy().squeeze()
+    
+        return boxes
+
+        
 
 #%%
 if __name__ == "__main__":
-    calibrator = PACBayesBox()
 
     config = OmegaConf.create({
+        "training_config": {
+        "dataset_base_path": "/media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_2k/data/",
         "batch_size": 50,
         "learning_rate": 1e-4,
         "prior_num_epochs": 50,
         "prior_lr": 0.01,
-        "posterior_num_epochs": 1000,
-        "posterior_lr": 1e-4,
+        "posterior_num_epochs": 100,
+        "posterior_lr": 1e-3, # TODO:  # 1e-4,
         "w1": 1.0,
         "w2": 0.1,
         "w3": 1.0,
@@ -220,11 +360,13 @@ if __name__ == "__main__":
         "N": 350,  # Number of samples for PAC-Bayes
         "num_objects": 5,  # Number of objects in the dataset
         "delta": 0.01,  # Confidence level for PAC-Bayes
-        "use_wandb": True,
-        "verbose": True
+        "use_wandb": False, # TODO:  # True,
+        "verbose": True,
+        "save_name": "PAC_inflation_model_avg-maskgt",
+        },
+        "weight_size": 1
     })
 
-    calibrator.calibrate(
-        calibration_dataset_base_path="/media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_2k/data/",
-        config=config
-    )
+    calibrator = PACBayesScalar(config=config)
+
+    calibrator.calibrate()

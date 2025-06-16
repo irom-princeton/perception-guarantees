@@ -21,6 +21,7 @@ class BBoxExperiment(BaseExperiment):
     def run(self,
             env,
             perception_model,
+            calibration_method,
             planner,):
         task_dataset = initialize_task(self.config.task)
 
@@ -31,12 +32,13 @@ class BBoxExperiment(BaseExperiment):
                     task=task,
                     env=env,
                     perception_model=perception_model,
+                    calibration_method=calibration_method,
                     planner=planner,
                     experiment_config=self.config
                 )
             
 
-    def plan_env(self, task, env, perception_model, planner, experiment_config=None):
+    def plan_env(self, task, env, perception_model, calibration_method, planner, experiment_config=None):
         """
         Plan and navigate through the environment using the perception model and planner.
         
@@ -68,11 +70,13 @@ class BBoxExperiment(BaseExperiment):
 
         while True and not done and not collided:
             state = planner.world.state_to_planner(env._state)
-            # print(f'state at step {steps_taken}: {state}')
-            boxes = perception_model.get_box(observation, experiment_config)
-            # print(boxes)
-            boxes[:,0,:] -= experiment_config.cp
-            boxes[:,1,:] += experiment_config.cp
+            
+            # predict calibrated boxes
+            boxes = perception_model.get_box(observation, 
+                                             calibration_method,
+                                             experiment_config)
+            # print("Boxes: ", boxes)
+            # convert boxes to planner frame
             boxes = planner.world.boxes_to_planner_frame(boxes)
 
             ###########################################################################
@@ -134,7 +138,7 @@ class BBoxExperiment(BaseExperiment):
             if t > 140 or plan_fail > 10:
                 print("Env: ", str(task.env), " Failed")
                 break
-        filename = f'{experiment_config.task.room_folder}{task.env}/cp_{experiment_config.cp}_{experiment_config.name}{experiment_config.save_tag}'
+        filename = f'{experiment_config.task.room_folder}{task.env}/{experiment_config.name}{experiment_config.save_tag}'
         self.plot_results(filename, state_traj , ground_truth, planner)
 
         result = {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
@@ -166,7 +170,7 @@ class BBoxExperiment(BaseExperiment):
             experiment_config: The configuration for the experiment.
         """
         task_dataset = initialize_task(self.config.task)
-        filename = f'cp_{self.config.cp}_{self.config.name}{self.config.save_tag}'
+        filename = f'{self.config.name}{self.config.save_tag}'
         
         traj = {}
         done= []

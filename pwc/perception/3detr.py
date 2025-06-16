@@ -54,6 +54,7 @@ class Perception3DETR(PerceptionModel):
     
     def get_box(self,
                 observation_,
+                calibration_method=None,
                 exp_config=None):
         # Filter points with z < 0.01 and abs(y) > 3.5 and x> 0.01 and within a 1m distance of the robot
         # axis transformed, so filter x,y same way
@@ -87,17 +88,19 @@ class Perception3DETR(PerceptionModel):
         inputs = {'point_clouds': pc_all, 'point_cloud_dims_min': pc_min_all, 'point_cloud_dims_max': pc_max_all}
 
         outputs = self.model(inputs)
+        
+        box_features = outputs["box_features"].detach().cpu()
+        box_features_ = torch.reshape(box_features, (1,1,128,256))
+
         if exp_config.is_finetune:
-            box_features = outputs["box_features"].detach()
-            box_features_ = torch.reshape(box_features, (1,1,128,256))
             model_cp = None #TODO: finetune model
             finetune = model_cp(box_features_)
+
+        
         
         bbox_pred_points = outputs['outputs']['box_corners'].detach().cpu()
         obj_prob = outputs["outputs"]["objectness_prob"].clone().detach().cpu()
-        cls_prob = outputs["outputs"]["sem_cls_prob"].clone().detach().cpu()
 
-        chair_prob = cls_prob[:,:,3]
         sort_box = torch.sort(obj_prob,1,descending=True)
 
         # Visualize
@@ -123,13 +126,13 @@ class Perception3DETR(PerceptionModel):
             fig.show()
 
         num_probs = 0
-        num_boxes = 15
         corners = []
+
         if np.any(np.isnan(np.array(bbox_pred_points))):
             return self.get_room_size_box(pc_all)[0]
         
         for (sorted_idx,prob) in zip(list(sort_box[1][0,:]), list(sort_box[0][0,:])):
-            if (num_probs < num_boxes):
+            if (num_probs < self.num_boxes):
                 prob = prob.numpy()
                 bbox = bbox_pred_points[range(batch_size), sorted_idx, :, :]
                 cc = pc_to_axis_aligned_rep(bbox.numpy())
@@ -178,12 +181,41 @@ class Perception3DETR(PerceptionModel):
             # ipy.embed()
             corners+=finetuned_arr
         
-        boxes = np.zeros((len(corners),2,2))
-        for i in range(len(corners)):
-            # boxes[i,:,:] = corners[i][0,:,0:2]
-            boxes[i,:,0] = corners[i][0,:,1]
-            boxes[i,0,1] = -corners[i][0,1,0]
-            boxes[i,1,1] = -corners[i][0,0,0]
+        if calibration_method.name == "PACBayes-box":
+            # Calibrate the bounding boxes at runtime
+            corners = np.array(corners)
+            corners = calibration_method.calibrate_runtime(box_features_, torch.Tensor(corners).squeeze())
+            boxes = np.zeros((len(corners),2,2))
+            for i in range(len(corners)):
+                # boxes[i,:,:] = corners[i][0,:,0:2]
+                boxes[i,:,0] = corners[i,:,1]
+                boxes[i,0,1] = -corners[i,1,0]
+                boxes[i,1,1] = -corners[i,0,0]
+
+        elif calibration_method.name == "PwC":
+            boxes = np.zeros((len(corners),2,2))
+            for i in range(len(corners)):
+                boxes[i,:,0] = corners[i][0,:,1]
+                boxes[i,0,1] = -corners[i][0,1,0]
+                boxes[i,1,1] = -corners[i][0,0,0]
+            
+            boxes[:,0,:] -= exp_config.cp
+            boxes[:,1,:] += exp_config.cp
+        
+        elif calibration_method.name == "PACBayes-scalar":
+            # Calibrate the bounding boxes at runtime
+            corners = np.array(corners)
+            corners = calibration_method.calibrate_runtime(torch.Tensor(corners).squeeze())
+            boxes = np.zeros((len(corners),2,2))
+            for i in range(len(corners)):
+                # boxes[i,:,:] = corners[i][0,:,0:2]
+                boxes[i,:,0] = corners[i,:,1]
+                boxes[i,0,1] = -corners[i,1,0]
+                boxes[i,1,1] = -corners[i,0,0]
+
+        #TODO: add other calibration methods
+        else:
+            raise NotImplementedError(f"Calibration method {calibration_method.name} is not implemented.")
 
         return boxes
 

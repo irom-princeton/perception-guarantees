@@ -1,0 +1,130 @@
+perception: 
+  _target_: pwc.perception.3detr.Perception3DETR
+  config:
+    visualize: False
+    num_pc_points: 40000
+    num_chairs: 5
+    num_boxes: 15
+    room_thresholds:
+      xmin: 0.05
+      xmax: 7.95
+      ymin: -3.9
+      ymax: 3.9
+      zmin: 0.1
+      zmax: 2.9
+
+nav_sim:
+  _target_: pwc.nav_sim.task_env.TaskEnv
+  render: False
+  config:
+    mode: experiment # experiment or calibration
+    room:
+      room_dim: 8
+      wall_thickness: 0.1
+      wall_height: 4
+      ground_rgba: [0.8, 0.8, 0.8, 1.0]
+      wall_rgba: [0.9, 0.9, 0.9, 1.0]
+    robot:
+      half_dim: [0.323, 0.14, 0.2] 
+      lidar_height: 0.15
+      camera_thickness: 0.04
+    dynamics:
+      params_path: pwc/planning/sp_var.pkl
+      dt: 0.1
+
+    
+#TODO 
+calibration:
+  _target_: pwc.calibration.PAC_Bayes_scalar.PACBayesScalar
+  name: PACBayes-scalar
+  config: 
+    runtime_config:
+      trained_model_path: /home/zm2074/Projects/perception-guarantees/pwc/perception/models/trained_models/PAC_inflation_model.pth
+    training_config:
+      dataset_base_path: /media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_2k/data/
+      batch_size: 50
+      learning_rate: 1e-4
+      prior_num_epochs: 50
+      prior_lr: 0.01
+      posterior_num_epochs: 100
+      posterior_lr: 1e-4
+      w1: 1.0
+      w2: 0.1
+      w3: 1.0
+      N_total: 400  # Total number of samples for calibration
+      N: 350  # Number of samples for PAC-Bayes
+      num_objects: 5  # Number of objects in the dataset
+      delta: 0.01  # Confidence level for PAC-Bayes
+      use_wandb: True
+      verbose: True
+      save_name: PAC_scalar_model
+    weight_size: 1
+
+      
+experiment:
+  _target_: pwc.experiments.bbox_experiment.BBoxExperiment
+  config:
+    name: PAC-scalar-3detr
+    save_tag: _0610
+    description: PWC calibration with 3DETR model
+    visualize: False
+    num_pc_points: 40000
+    init_state: [0.2,-1,0,0]
+    goal_loc: [7,-2]
+    goal_loc_planner_frame: [6,7]
+    num_boxes: 5
+    cp: 3.0259
+    is_finetune: False
+    num_envs: 100
+    num_parallel: 10
+    task: 
+      path: /home/zm2074/Projects/data/perception-guarantees/task_multiple.pkl
+      room_folder: /home/zm2074/Projects/data/perception-guarantees/rooms_multiple/
+      goal_radius: 1.5
+      init_state: [0.2,-1,0,0]
+      observation:
+        type: depth
+        rgb:
+          x_offset_from_robot_front: 0.05  # no y offset
+          z_offset_from_robot_top: 0.05
+          tilt: 0  # degrees of tilting down towards the floor
+          img_w: 662
+          img_h: 376
+          aspect: 1.57
+          fov: 70  # in PyBullet, this is vertical field of view in degrees
+        depth:
+          img_w: 662
+          img_h: 376
+        lidar:
+          z_offset_from_robot_top: 0.01
+          horizontal_res: 1  # resolution, in degree,1
+          vertical_res: 1  # resolution, in degree , 1
+          vertical_fov: 30  # half in one direction, in degree
+          max_range: 5 # in meter Anushri changed from 5 to 8
+        camera_pos: {}
+        cam_not_inside_obs: {}
+        is_visible: {}
+
+
+
+planning:
+  _target_: pwc.planning.safe_planner.SafePlanner
+  world_box: [[0, 0], [8, 8]]
+  vx_range: [-0.5, 0.5]        # velocity ranges
+  vy_range: [0, 4]
+  sr: 1.0                      # initial clearance
+  init_state: [5, 0.2, 0, 0]   # initial state [x, y, vx, vy]
+  goal_f: [7, -2, 0.5, 0]      # goal location with forrestal coordinates
+  dt: 0.1                      # time resolution for controls
+  sensor_dt: 0.5               # time resolution for perception update
+  r: 3                         # cost threshold for reachability
+  radius: 0.5                  # radius for finding intermediate goals
+  FoV: 60                      # field of view (in degrees)
+  FoV_range: 5                 # can't see beyond 5 meters
+  FoV_close: 1                 # can't see within 1 meter
+  n_samples: 2000
+  max_search_iter: 1000
+  weight: 10                   # weight for cost to go vs. cost to come
+  seed: 0
+  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset.pkl
+  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable.pkl

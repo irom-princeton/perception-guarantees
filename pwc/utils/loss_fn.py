@@ -6,6 +6,7 @@ import torch
 import numpy as np
 import scipy
 import math
+# import IPython
 
 def diff_conditional_success(epsilon_hat, desired_success_prob, N, delta):
 	v = np.floor((N+1)*epsilon_hat)
@@ -13,7 +14,7 @@ def diff_conditional_success(epsilon_hat, desired_success_prob, N, delta):
 	b = v
 	return scipy.special.betaincinv(a, b, delta) - desired_success_prob
 
-
+# @torch.jit.ignore
 def box_loss_diff(
     corners_pred: torch.Tensor,
     corners_gt: torch.Tensor,
@@ -44,17 +45,20 @@ def box_loss_diff(
 
     B, K, N = corners_gt.shape[0], corners_gt.shape[1], corners_gt.shape[2]
 
+    EPS = 1e-6
+    # corners_gt = torch.mul(loss_mask[..., None, None], corners_gt)
+
     # Ensure that corners of predicted bboxes satisfy basic constraints
     corners1_pred = torch.min(corners_pred[:, :, :, 0, :][:,:,None,:], corners_pred[:, :, :, 1, :][:,:,None,:])
     corners2_pred = torch.max(corners_pred[:, :, :, 0, :][:,:,None,:], corners_pred[:, :, :, 1, :][:,:,None,:])
 
-
     # Calculate volume of ground truth and predicted boxes
     vol_gt = torch.prod(corners_gt[:, :, :, 1, :][:,:,None,:] - corners_gt[:, :, :, 0, :][:,:,None,:], 4)
     idx = torch.where(vol_gt ==0)
-    loss_mask[idx[0],idx[1],idx[3]] = 0.0 #torch.tensor(0, dtype=torch.float32)
-    vol_gt[idx] = 0.001 #torch.tensor(0.001, dtype=torch.float32)
-    vol_pred = torch.prod(corners2_pred - corners1_pred, 4)
+    # loss_mask[idx[0],idx[1],idx[3]] = 0.0 #torch.tensor(0, dtype=torch.float32)
+    # corners_gt = torch.mul(loss_mask[..., None, None], corners_gt)
+    vol_gt[idx] = EPS # 0.001 #torch.tensor(0.001, dtype=torch.float32)
+    vol_pred = torch.prod(corners2_pred - corners1_pred, 4).clamp(min=EPS)
 
     # Calculate intersection between predicted and ground truth boxes
     corners1_int = torch.max(corners1_pred, corners_gt[:,:,:,0,:][:,:,None,:])
@@ -63,7 +67,7 @@ def box_loss_diff(
     vol_int = torch.prod(corners_int_diff, 4)
 
     # Find smallest box that encloses predicted and ground truth boxes
-    EPS = 1e-6
+    
     corners1_enclosing = torch.min(corners1_pred, corners_gt[:,:,:,0,:][:,:,None,:])
     corners2_enclosing = torch.max(corners2_pred, corners_gt[:,:,:,1,:][:,:,None,:])
     corners_enclosing_diff = (corners2_enclosing - corners1_enclosing)
@@ -84,25 +88,43 @@ def box_loss_diff(
     # ipy.embed()
 
     losses = (w1*l1 + w2*l2 + w3*l3)/(w1+w2+w3)
+
+    if torch.isnan(losses).any():
+        breakpoint()
+
+    losses = torch.sign(vol_gt-vol_int)*losses
+
     # ipy.embed()
+    # print("Volumes gt, pred, int, enclosing ", vol_gt, vol_pred, vol_int, vol_enclosing)
+    # print('l1', l1, 'l2', l2, 'l3', l3)
+    # print("Losses ", losses)
+    # print("GT:", corners_gt)
+    # print("GT vol", vol_gt)
 
     # Mask loss in locations where object was not visible
-    losses = torch.mul(loss_mask, losses.view((B, K,N )))
+    # losses = torch.mul(loss_mask, losses.view((B, K,N )))
+    # print("Losses after mask ", losses)
 
-    # Take max across locations and objects
-    losses = losses.amax(dim=1)
-    losses = losses.amax(dim=1)
+    # # Take max across locations and objects
+    # losses = losses.amax(dim=1)
+    # losses = losses.amax(dim=1)
 
     # # Take max across locations and objects
     # losses = losses.mean(dim=1)
     # losses = losses.mean(dim=1)
+    
+    # coverage loss (for evaluation)
+    
+    # covg_loss = (vol_int <= vol_gt).float()
+    # covg_loss = covg_loss.amax(dim=1)
+    # covg_loss = covg_loss.amax(dim=1)
 
     # Take mean across environments
     mean_loss = losses.mean()
 
     return mean_loss
 
-box_loss_diff_jit = torch.jit.script(box_loss_diff)
+# box_loss_diff_jit = torch.jit.script(box_loss_diff)
 
 
 def box_loss_true(
@@ -158,18 +180,13 @@ def box_loss_true(
     # Mask loss (0 for locations where object was not visible)
     not_enclosed = torch.mul(loss_mask, not_enclosed.view((not_enclosed.shape[0], not_enclosed.shape[1], not_enclosed.shape[2])))
 
-    # ipy.embed()
     # Take max loss across locations in each environment and for each object in the environment
     losses = not_enclosed.amax(dim=1)
     losses = losses.amax(dim=1)
 
     # Take mean across environments in the batch
-    mean_loss = losses.mean()
-    # print("Loss ", mean_loss)
-
-    # ipy.embed()
-    # if mean_loss == 1:
-        # ipy.embed()
+    # mean_loss = losses.mean()
+    mean_loss = not_enclosed.mean()
 
     return mean_loss, not_enclosed
 

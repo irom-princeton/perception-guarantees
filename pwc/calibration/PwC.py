@@ -17,7 +17,9 @@ class PwC(Calibration):
     Works with bounding box predictor
     """
 
-    def __init__(self, name: str = "PwC"):
+    def __init__(self, 
+                 name: str = "PwC",
+                 config: dict = None):
         """
         Initialize the PwC calibration method.
 
@@ -25,6 +27,9 @@ class PwC(Calibration):
             name (str): Name of the calibration method.
         """
         super().__init__(name)
+        self.config = config
+        if self.config is not None:
+            self.cp = self.config.get('cp', 0.1)
 
     def calibrate(self,
                   calibration_dataset_base_path: str = "/media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/",
@@ -66,7 +71,7 @@ class PwC(Calibration):
             average_cp = scale_prediction_average(boxes_3detr, boxes_gt, loss_mask, q_level)
             print('CP quantile prediction', scaling_cp)
             print('CP quantile prediction (for baseline CP-avg.)', average_cp)
-        #################################################################
+        
         return scaling_cp, average_cp
 
 #%%
