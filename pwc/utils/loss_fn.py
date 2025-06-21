@@ -58,42 +58,47 @@ def box_loss_diff(
     # loss_mask[idx[0],idx[1],idx[3]] = 0.0 #torch.tensor(0, dtype=torch.float32)
     # corners_gt = torch.mul(loss_mask[..., None, None], corners_gt)
     vol_gt[idx] = EPS # 0.001 #torch.tensor(0.001, dtype=torch.float32)
-    vol_pred = torch.prod(corners2_pred - corners1_pred, 4).clamp(min=EPS)
+    vol_pred = torch.prod(corners2_pred - corners1_pred, 4) # .clamp(min=EPS)
 
     # Calculate intersection between predicted and ground truth boxes
     corners1_int = torch.max(corners1_pred, corners_gt[:,:,:,0,:][:,:,None,:])
     corners2_int = torch.min(corners2_pred, corners_gt[:,:,:,1,:][:,:,None,:])
     corners_int_diff = (corners2_int - corners1_int).clamp(min=0)
-    vol_int = torch.prod(corners_int_diff, 4)
+    vol_int = torch.prod(corners_int_diff, 4) # .clamp(min=EPS)
 
     # Find smallest box that encloses predicted and ground truth boxes
     
     corners1_enclosing = torch.min(corners1_pred, corners_gt[:,:,:,0,:][:,:,None,:])
     corners2_enclosing = torch.max(corners2_pred, corners_gt[:,:,:,1,:][:,:,None,:])
     corners_enclosing_diff = (corners2_enclosing - corners1_enclosing)
-    vol_enclosing = torch.prod(corners_enclosing_diff, 4).clamp(min=EPS)
+    vol_enclosing = torch.prod(corners_enclosing_diff, 4) # .clamp(min=EPS)
 
     # Compute volume of GT\PRED and PRED\GT
     vol_gt_minus_pred = vol_gt - vol_int
     vol_pred_minus_gt = vol_pred - vol_int
 
     # Compute volume of union
-    vol_union = (vol_pred + vol_gt - vol_int).clamp(min=EPS)
-
+    vol_union = (vol_pred + vol_gt - vol_int) # .clamp(min=EPS)
+    
+    # avoid divide-by-zero errors
+    vol_gt_clamp = vol_gt.clamp(min=EPS)
+    vol_pred_clamp = vol_pred.clamp(min=EPS)
+    vol_enclosing_clamp = vol_enclosing.clamp(min=EPS)
+    
     # Now compute all the terms in the loss
-    l1 = vol_gt_minus_pred / vol_gt
-    l2 = vol_pred_minus_gt / vol_pred
-    l3 = (vol_enclosing - vol_union)/vol_enclosing
+    l1 = vol_gt_minus_pred / vol_gt_clamp # vol_gt
+    l2 = vol_pred_minus_gt / vol_pred_clamp # vol_pred
+    l3 = (vol_enclosing - vol_union) / vol_enclosing_clamp # vol_enclosing
 
     # ipy.embed()
 
     losses = (w1*l1 + w2*l2 + w3*l3)/(w1+w2+w3)
-
+    
     if torch.isnan(losses).any():
         breakpoint()
 
     losses = torch.sign(vol_gt-vol_int)*losses
-
+    # losses = torch.sign(vol_gt-vol_int)
     # ipy.embed()
     # print("Volumes gt, pred, int, enclosing ", vol_gt, vol_pred, vol_int, vol_enclosing)
     # print('l1', l1, 'l2', l2, 'l3', l3)
@@ -105,9 +110,9 @@ def box_loss_diff(
     # losses = torch.mul(loss_mask, losses.view((B, K,N )))
     # print("Losses after mask ", losses)
 
-    # # Take max across locations and objects
-    # losses = losses.amax(dim=1)
-    # losses = losses.amax(dim=1)
+    # Take max across locations and objects
+    losses = losses.amax(dim=1)
+    losses = losses.amax(dim=1)
 
     # # Take max across locations and objects
     # losses = losses.mean(dim=1)

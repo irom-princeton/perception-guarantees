@@ -26,7 +26,8 @@ class BBoxExperiment(BaseExperiment):
         task_dataset = initialize_task(self.config.task)
 
         for task in tqdm(task_dataset):
-            if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
+            # if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
+            if int(task.env) in list(range(self.config.num_envs)):
                 print("Running task:", task.env)
                 self.plan_env(
                     task=task,
@@ -87,7 +88,7 @@ class BBoxExperiment(BaseExperiment):
             
             X = np.transpose(np.array(X))
             misdetected += perception_model.count_misdetection(boxes, ground_truth, X, task.piece_bounds_all)
-            # print("Misdetected: ", misdetected)
+            
             time_misdetected+=1
             ###########################################################################
 
@@ -138,9 +139,10 @@ class BBoxExperiment(BaseExperiment):
             if t > 140 or plan_fail > 10:
                 print("Env: ", str(task.env), " Failed")
                 break
+            
         filename = f'{experiment_config.task.room_folder}{task.env}/{experiment_config.name}{experiment_config.save_tag}'
         self.plot_results(filename, state_traj , ground_truth, planner)
-
+        print("Misdetected: ", misdetected/time_misdetected)
         result = {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
         np.savez_compressed(filename, data=result)
         print(f"Results saved to {filename}.npz")
@@ -157,7 +159,7 @@ class BBoxExperiment(BaseExperiment):
                 state_tf = state_tf.reshape((4,1))
             ax.plot(state_tf[0, :], state_tf[1, :], c='r', linewidth=1, label='state')
         plt.legend()
-        plt.savefig(filename + f'traj_plot.png')
+        plt.savefig(f'{filename}_traj_plot.png')
         # plt.savefig('plot.png')
         # plt.show()
     
@@ -193,7 +195,22 @@ class BBoxExperiment(BaseExperiment):
                 traj_info = data_["data"].item()
                 traj[task.env] = traj_info['trajectory']
                 envs.append(task.env)
-                done.append(int(traj_info['done']))
+
+                if len(traj[task.env]) > 0:
+                    success = np.linalg.norm(np.array(traj[task.env][-1, 0, 0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
+                    goal_reached = np.linalg.norm(np.array(traj[task.env][:,0,0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
+                    if np.any(goal_reached):
+                        success = True
+                        first_goal_idx = np.where(goal_reached)[0][0]
+                        traj[env] = traj[env][:first_goal_idx+1]
+                    done_env = success or traj_info['done']
+                    done.append(int(done_env))
+                else:
+                    done.append(0)
+
+                # done.append(int(success))
+                # done.append(int(traj_info['done']))
+
                 coll.append(int(traj_info['collision']==False))
                 misdetect.append(traj_info['misdetection'])
 

@@ -37,22 +37,27 @@ nav_sim:
 calibration:
   _target_: pwc.calibration.PwC.PwC
   name: PwC
-  calibration_dataset_base_path: /media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/
-  epsilon: 0.15
-  delta: 0.01
+  config: 
+    training_config:
+      calibration_dataset_base_path: /media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_2k/data/ #/media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/
+      epsilon: 0.15
+      delta: 0.01
+      N: 400
+    runtime_config:
+      cp: 0.75
 
 experiment:
   _target_: pwc.experiments.bbox_experiment.BBoxExperiment
   config:
     name: pwc-3detr
-    save_tag: _0601
+    save_tag: _0619-cp0.75
     description: PWC calibration with 3DETR model
     visualize: False
     num_pc_points: 40000
     init_state: [0.2,-1,0,0]
     goal_loc: [7,-2]
     goal_loc_planner_frame: [6,7]
-    cp: 3.0259
+    cp: 0.75 # 3.0259
     is_finetune: False
     num_envs: 100
     num_parallel: 10
@@ -60,6 +65,7 @@ experiment:
       path: /home/zm2074/Projects/data/perception-guarantees/task_multiple.pkl
       room_folder: /home/zm2074/Projects/data/perception-guarantees/rooms_multiple/
       goal_radius: 1
+      init_state: [0.2,-1,0,0]
       observation:
         type: depth
         rgb:

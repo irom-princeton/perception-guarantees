@@ -1,6 +1,7 @@
 import os
 import wandb
 from copy import deepcopy
+import numpy as np
 import torch
 from torch.utils.data import DataLoader, random_split, Subset
 from omegaconf import OmegaConf
@@ -93,7 +94,8 @@ class PACBayesScalar(Calibration):
         #--------Prior Model--------
         prior = InflationModel(self.config.weight_size)
         prior.init_logvar(-4)
-        # prior.init_mu(-10) # initializing mu
+        # prior.init_mu(0.5) # initializing mu
+        prior.init_mu(0.05) # initializing mu
         prior.to(self.device)
 
         print("Training prior...")
@@ -186,11 +188,12 @@ class PACBayesScalar(Calibration):
                     "epoch": epoch,
                     "loss/train": current_loss / num_batches,
                     "loss/true": current_loss_true / num_batches,
+                    "mu": model.layer.mu.item(),
+                    "logvar": model.layer.logvar.item(),
                 })
             print_interval = 1
             if self.training_config.verbose and (epoch % print_interval == 0):
-                print("epoch: ", epoch, "; loss: ", '{:02.6f}'.format(current_loss/num_batches),
-                    "; loss true: ", '{:02.6f}'.format(current_loss_true / num_batches), end='\r')
+                print(f"epoch: {epoch}; loss: {current_loss/num_batches:02.6f}; loss true: {current_loss_true/num_batches:02.6f}; mu: {model.layer.mu.item():02.6f}", end='\r')
 
 
     def loss_prior(self,
@@ -219,9 +222,16 @@ class PACBayesScalar(Calibration):
 
         loss = box_loss_diff(outputs + boxes_3detr, boxes_gt, self.w1, self.w2, self.w3, loss_mask)
         loss_true, not_enclosed = box_loss_true(outputs + boxes_3detr, boxes_gt, loss_mask, 0.01)
-
+        
+        # breakpoint()
+        # TODO: To be deleted...
+        # hj = torch.autograd.grad(loss, model.parameters(), retain_graph=True)
+        # hj = torch.autograd.grad(reg, model.parameters(), retain_graph=True)
+        
         reg = PAC_Bayes_regularizer(model, self.prior, self.training_config.N, self.training_config.delta, self.device)
-        loss += torch.sqrt(reg / 2)
+        # loss += torch.sqrt(reg / 2)
+        # breakpoint()
+        loss += torch.sqrt(reg / self.training_config.N)
         
         return loss, loss_true
     
@@ -265,7 +275,8 @@ class PACBayesScalar(Calibration):
             dataloader=loader,
             posterior=posterior,
             prior=prior,
-            loss_fn=self.loss_coverage,
+            # loss_fn=self.loss_coverage,
+            loss_fn=self.loss_prior,
         )
         print(f"PAC-Bayes bound: {bound.item():.4f}")
 
@@ -290,18 +301,22 @@ class PACBayesScalar(Calibration):
             loss_mask = loss_mask.to(self.device)
 
             # forward pass
-            outputs = prior(boxes_gt.shape[:3]) # B x K x N
+            outputs = posterior(boxes_gt.shape[:3]) # B x K x N
             inflation_factor = outputs[..., None, None] * torch.ones_like(boxes_3detr)
             inflation_factor[:,:,:,0,:] *= -1.0
 
-            not_enclosed = loss_fn(prior, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
+            # not_enclosed = loss_fn(prior, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
             # take max over states and objects
-            not_enclosed = not_enclosed.amax(dim=1).amax(dim=1)  # B
-        breakpoint()
-        train_loss = not_enclosed.sum().item() / len(not_enclosed)  # average over batch
+            # not_enclosed = not_enclosed.amax(dim=1).amax(dim=1)  # B
+            train_loss, _ = loss_fn(posterior, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
+
+        # train_loss = not_enclosed.sum().item() / len(not_enclosed)  # average over batch
             
         # Compute the PAC-Bayes bound
-        bound = train_loss + torch.sqrt(reg / 2)
+        # bound = train_loss + torch.sqrt(reg / 2)
+        regularizer = torch.sqrt(reg / self.training_config.N)
+        bound = train_loss + regularizer
+        print(f"Train loss: {train_loss:.4f}, Regularizer: {regularizer.item():.4f}, Bound: {bound.item():.4f}")
         return bound
     
     def loss_coverage(self,
@@ -317,6 +332,32 @@ class PACBayesScalar(Calibration):
         return not_enclosed
     
     def calibrate_runtime(self,
+                          corners: torch.Tensor,
+                          _ = None):
+
+        boxes_3detr = torch.Tensor(np.array(corners)).squeeze()
+        boxes_3detr = boxes_3detr.to(self.device)
+
+        self.model.init_xi()
+        outputs = self.model(boxes_3detr.shape[:1]) # B x K x N # sample inflation factor
+
+        inflation_factor = outputs[..., None, None] * torch.ones_like(boxes_3detr)
+        inflation_factor[:,0,:] *= -1.0
+        
+        #--------Combine with 3DETR boxes--------
+        inflated_corners = inflation_factor + boxes_3detr
+        inflated_corners = inflated_corners.cpu().detach().numpy().squeeze()
+
+        boxes = np.zeros((len(corners),2,2))
+        for i in range(len(corners)):
+            # boxes[i,:,:] = corners[i][0,:,0:2]
+            boxes[i,:,0] = corners[i,:,1]
+            boxes[i,0,1] = -corners[i,1,0]
+            boxes[i,1,1] = -corners[i,0,0]
+    
+        return boxes
+    
+    def calibrate_runtime_pwc(self,
                           boxes_3detr: torch.Tensor,
                           config: OmegaConf = None):
         if config is not None:
@@ -326,12 +367,10 @@ class PACBayesScalar(Calibration):
 
         self.model.init_xi()
         outputs = self.model(boxes_3detr.shape[:1]) # B x K x N # sample inflation factor
-        # outputs = self.model.layer.mu # deterministic inflation factor
+        outputs = torch.ones_like(outputs) * 0.75
 
-        # inflation_factor = outputs*torch.ones_like(boxes_3detr)
-        # inflation_factor[:,0,:] *= -1.0
         inflation_factor = outputs[..., None, None] * torch.ones_like(boxes_3detr)
-        inflation_factor[:,:,:,0,:] *= -1.0
+        inflation_factor[:,0,:] *= -1.0
         
         #--------Combine with 3DETR boxes--------
         boxes = inflation_factor + boxes_3detr

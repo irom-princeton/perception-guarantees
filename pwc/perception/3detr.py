@@ -180,43 +180,22 @@ class Perception3DETR(PerceptionModel):
             finetuned_arr = np.squeeze(finetuned_arr)
             # ipy.embed()
             corners+=finetuned_arr
+
+        # Apply calibration method
+        boxes = calibration_method.calibrate_runtime(corners, box_features)
         
-        if calibration_method.name == "PACBayes-box":
-            # Calibrate the bounding boxes at runtime
-            corners = np.array(corners)
-            corners = calibration_method.calibrate_runtime(box_features_, torch.Tensor(corners).squeeze())
-            boxes = np.zeros((len(corners),2,2))
-            for i in range(len(corners)):
-                # boxes[i,:,:] = corners[i][0,:,0:2]
-                boxes[i,:,0] = corners[i,:,1]
-                boxes[i,0,1] = -corners[i,1,0]
-                boxes[i,1,1] = -corners[i,0,0]
+        # if calibration_method.name == "PACBayes-box":
+        #     # Calibrate the bounding boxes at runtime
+        #     corners = np.array(corners)
+        #     corners = calibration_method.calibrate_runtime(box_features_, torch.Tensor(corners).squeeze())
+        #     boxes = np.zeros((len(corners),2,2))
+        #     for i in range(len(corners)):
+        #         # boxes[i,:,:] = corners[i][0,:,0:2]
+        #         boxes[i,:,0] = corners[i,:,1]
+        #         boxes[i,0,1] = -corners[i,1,0]
+        #         boxes[i,1,1] = -corners[i,0,0]
 
-        elif calibration_method.name == "PwC":
-            boxes = np.zeros((len(corners),2,2))
-            for i in range(len(corners)):
-                boxes[i,:,0] = corners[i][0,:,1]
-                boxes[i,0,1] = -corners[i][0,1,0]
-                boxes[i,1,1] = -corners[i][0,0,0]
-            
-            boxes[:,0,:] -= exp_config.cp
-            boxes[:,1,:] += exp_config.cp
         
-        elif calibration_method.name == "PACBayes-scalar":
-            # Calibrate the bounding boxes at runtime
-            corners = np.array(corners)
-            corners = calibration_method.calibrate_runtime(torch.Tensor(corners).squeeze())
-            boxes = np.zeros((len(corners),2,2))
-            for i in range(len(corners)):
-                # boxes[i,:,:] = corners[i][0,:,0:2]
-                boxes[i,:,0] = corners[i,:,1]
-                boxes[i,0,1] = -corners[i,1,0]
-                boxes[i,1,1] = -corners[i,0,0]
-
-        #TODO: add other calibration methods
-        else:
-            raise NotImplementedError(f"Calibration method {calibration_method.name} is not implemented.")
-
         return boxes
 
     def run_step(self,

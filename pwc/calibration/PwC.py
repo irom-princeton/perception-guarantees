@@ -1,7 +1,7 @@
 #%%
 import numpy as np
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 import scipy.optimize as opt
 
 from pwc.calibration.base_calibration import Calibration
@@ -28,13 +28,10 @@ class PwC(Calibration):
         """
         super().__init__(name)
         self.config = config
-        if self.config is not None:
-            self.cp = self.config.get('cp', 0.1)
+        if "runtime_config" in config:
+            self.cp = self.config.runtime_config['cp']
 
-    def calibrate(self,
-                  calibration_dataset_base_path: str = "/media/zm2074/Data Drive/data/perception-guarantees/PwC_calibration/calibrate_4k_rot/data/",
-                  epsilon: float = 0.15,
-                  delta: float = 0.01,):
+    def calibrate(self):
         """
         Calibrate the predictions based on the targets.
 
@@ -43,11 +40,19 @@ class PwC(Calibration):
             epsilon (float): desired epsilon = 1-coverage.
             delta (float): desired delta.
         """
+        calibration_dataset_base_path = self.config.training_config.calibration_dataset_base_path
+        epsilon = self.config.training_config.epsilon
+        delta = self.config.training_config.delta
+        N = self.config.training_config.N
+
         # Initialize dataset and dataloader
         dataset = PointCloudDataset(calibration_dataset_base_path+'features.pt',
                                    calibration_dataset_base_path+'bbox_labels.pt',
                                    calibration_dataset_base_path+'loss_mask.pt')
+        # take the first N data points
+        dataset = Subset(dataset, range(N))
         dataloader_cp = DataLoader(dataset, batch_size=len(dataset))
+
         
         # Device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -73,7 +78,18 @@ class PwC(Calibration):
             print('CP quantile prediction (for baseline CP-avg.)', average_cp)
         
         return scaling_cp, average_cp
+    
+    def calibrate_runtime(self, corners, _=None):
+        boxes = np.zeros((len(corners),2,2))
+        for i in range(len(corners)):
+            boxes[i,:,0] = corners[i][0,:,1]
+            boxes[i,0,1] = -corners[i][0,1,0]
+            boxes[i,1,1] = -corners[i][0,0,0]
+        
+        boxes[:,0,:] -= self.cp
+        boxes[:,1,:] += self.cp
 
+        return boxes
 #%%
 if __name__ == "__main__":
     pwc = PwC()
