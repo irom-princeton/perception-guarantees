@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 import os
+from joblib import Parallel, delayed
 
 from pwc.experiments.base_experiment import BaseExperiment
 from pwc.utils.task_util import initialize_task
@@ -25,18 +26,26 @@ class BBoxExperiment(BaseExperiment):
             planner,):
         task_dataset = initialize_task(self.config.task)
 
-        for task in tqdm(task_dataset):
-            # if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
-            if int(task.env) in list(range(self.config.num_envs)):
-                print("Running task:", task.env)
-                self.plan_env(
-                    task=task,
-                    env=env,
-                    perception_model=perception_model,
-                    calibration_method=calibration_method,
-                    planner=planner,
-                    experiment_config=self.config
-                )
+        task_dataset_exp = task_dataset[:self.config.num_envs] # start from the top
+        # task_dataset_exp = task_dataset[-self.config.num_envs:] # start from the bottom
+
+        all_results = Parallel(n_jobs=self.config.num_parallel, prefer="processes")(
+            delayed(self.plan_env)(task, env, perception_model, calibration_method, planner, self.config)
+            for task in task_dataset_exp
+        )
+
+        # for task in tqdm(task_dataset_exp):
+        #     if task.env == '87':
+        #         print("Running task:", task.env)
+        #         all_results = self.plan_env(
+        #             task=task,
+        #             env=env,
+        #             perception_model=perception_model,
+        #             calibration_method=calibration_method,
+        #             planner=planner,
+        #             experiment_config=self.config
+        #         )
+        return all_results
             
 
     def plan_env(self, task, env, perception_model, calibration_method, planner, experiment_config=None):
@@ -140,7 +149,7 @@ class BBoxExperiment(BaseExperiment):
                 print("Env: ", str(task.env), " Failed")
                 break
             
-        filename = f'{experiment_config.task.room_folder}{task.env}/{experiment_config.name}{experiment_config.save_tag}'
+        filename = f'{experiment_config.task.room_folder}{task.env}/{experiment_config.name}{experiment_config.save_tag}' #_{steps_taken}'
         self.plot_results(filename, state_traj , ground_truth, planner)
         print("Misdetected: ", misdetected/time_misdetected)
         result = {"trajectory": np.array(state_traj), "done": done, "collision": collided, "misdetection": (misdetected/time_misdetected)}
@@ -182,37 +191,40 @@ class BBoxExperiment(BaseExperiment):
         envs = []
         traj_length = 0
 
-        for task in tqdm(task_dataset):
-            if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
-                file_env = f'{self.config.task.room_folder}{task.env}/{filename}.npz'
+        task_dataset_exp = task_dataset[:self.config.num_envs] # start from the top
+        # task_dataset_exp = task_dataset[-self.config.num_envs:] # start from the bottom
 
-                # check if file exists
-                if not os.path.exists(file_env):
-                    print("File does not exist: ", file_env)
-                    continue
+        for task in tqdm(task_dataset_exp):
+            # if int(task.env) in list(range(len(task_dataset)-self.config.num_envs, len(task_dataset))):
+            file_env = f'{self.config.task.room_folder}{task.env}/{filename}.npz'
 
-                data_ = np.load(file_env, allow_pickle=True)
-                traj_info = data_["data"].item()
-                traj[task.env] = traj_info['trajectory']
-                envs.append(task.env)
+            # check if file exists
+            if not os.path.exists(file_env):
+                print("File does not exist: ", file_env)
+                continue
 
-                if len(traj[task.env]) > 0:
-                    success = np.linalg.norm(np.array(traj[task.env][-1, 0, 0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
-                    goal_reached = np.linalg.norm(np.array(traj[task.env][:,0,0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
-                    if np.any(goal_reached):
-                        success = True
-                        first_goal_idx = np.where(goal_reached)[0][0]
-                        traj[env] = traj[env][:first_goal_idx+1]
-                    done_env = success or traj_info['done']
-                    done.append(int(done_env))
-                else:
-                    done.append(0)
+            data_ = np.load(file_env, allow_pickle=True)
+            traj_info = data_["data"].item()
+            traj[task.env] = traj_info['trajectory']
+            envs.append(task.env)
 
-                # done.append(int(success))
-                # done.append(int(traj_info['done']))
+            if len(traj[task.env]) > 0:
+                success = np.linalg.norm(np.array(traj[task.env][-1, 0, 0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
+                goal_reached = np.linalg.norm(np.array(traj[task.env][:,0,0:2])-np.array(self.config.goal_loc_planner_frame)) < task.goal_radius
+                if np.any(goal_reached):
+                    success = True
+                    first_goal_idx = np.where(goal_reached)[0][0]
+                    traj[env] = traj[env][:first_goal_idx+1]
+                done_env = success or traj_info['done']
+                done.append(int(done_env))
+            else:
+                done.append(0)
 
-                coll.append(int(traj_info['collision']==False))
-                misdetect.append(traj_info['misdetection'])
+            # done.append(int(success))
+            # done.append(int(traj_info['done']))
+
+            coll.append(int(traj_info['collision']==False))
+            misdetect.append(traj_info['misdetection'])
 
         for i, env in enumerate(envs):
             if len(traj[env]) == 0:

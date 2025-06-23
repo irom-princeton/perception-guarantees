@@ -21,14 +21,14 @@ def KLDiv_gaussian(mu1, var1, mu2, var2, var_is_logvar=True):
     return torch.sum(kl_div)
 
 class StochasticLayer(nn.Module):
-    def __init__(self, weights_size):
+    def __init__(self, weights_size, mu0=0):
         super().__init__()
         self.weights_size = weights_size
 
         self.mu = nn.Parameter(torch.zeros(weights_size))
         self.logvar = nn.Parameter(torch.zeros(weights_size))
 
-        self.init_mu()
+        self.init_mu(mu0)
         self.init_logvar()
 
         self.stdev_xi = None

@@ -279,11 +279,7 @@ class SafePlanner:
         else:
             candidates = []
             for geom in self.world.free_space.geoms:
-                if geom.geom_type == 'LineString':
-                    # self.world.free_space.delete(geom)
-                    continue
-                else:
-                    candidates += [np.array(geom.exterior.interpolate(t).xy).reshape(2) for t in
+                candidates += [np.array(geom.exterior.interpolate(t).xy).reshape(2) for t in
                                    np.linspace(0,geom.length,
                                            int(np.floor(geom.length/self.radius)),False)]
         

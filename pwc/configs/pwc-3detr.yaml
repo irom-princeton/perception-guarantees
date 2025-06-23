@@ -50,12 +50,12 @@ experiment:
   _target_: pwc.experiments.bbox_experiment.BBoxExperiment
   config:
     name: pwc-3detr
-    save_tag: _0619-cp0.75
+    save_tag: _0622-cp0.75
     description: PWC calibration with 3DETR model
     visualize: False
     num_pc_points: 40000
     init_state: [0.2,-1,0,0]
-    goal_loc: [7,-2]
+    goal_loc: [7,-2] #[7.1, 0]
     goal_loc_planner_frame: [6,7]
     cp: 0.75 # 3.0259
     is_finetune: False
@@ -100,15 +100,15 @@ planning:
   init_state: [5, 0.2, 0, 0]   # initial state [x, y, vx, vy]
   goal_f: [7, -2, 0.5, 0]      # goal location with forrestal coordinates
   dt: 0.1                      # time resolution for controls
-  sensor_dt: 0.5               # time resolution for perception update
+  sensor_dt: 0.2               # time resolution for perception update
   r: 3                         # cost threshold for reachability
-  radius: 0.5                  # radius for finding intermediate goals
-  FoV: 60                      # field of view (in degrees)
+  radius: 0.1                  # radius for finding intermediate goals
+  FoV: 70                      # field of view (in degrees)
   FoV_range: 5                 # can't see beyond 5 meters
   FoV_close: 1                 # can't see within 1 meter
   n_samples: 2000
-  max_search_iter: 1000
+  max_search_iter: 2000
   weight: 10                   # weight for cost to go vs. cost to come
   seed: 0
-  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset.pkl
-  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable.pkl
+  Pset_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/Pset_10Hz.pkl
+  reachable_path: /home/zm2074/Projects/perception-guarantees/backup/planning/pre_compute/reachable_10Hz.pkl

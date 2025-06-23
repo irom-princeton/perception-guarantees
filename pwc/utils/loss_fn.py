@@ -131,6 +131,66 @@ def box_loss_diff(
 
 # box_loss_diff_jit = torch.jit.script(box_loss_diff)
 
+def box_loss_coverage(
+    corners_pred: torch.Tensor,
+    corners_gt: torch.Tensor,
+    w1: torch.Tensor,
+    w2: torch.Tensor,
+    w3: torch.Tensor,
+    loss_mask: torch.Tensor
+):
+    """
+    Box loss for optimization.
+    Input:
+        corners_pred: torch Tensor (B, K, 2, 3). Predicted.
+        corners_gt: torch Tensor (B, K, 2, 3). Ground truth.
+        Assumes that all boxes are axis-aligned.
+        w1, w2, w3: weights on the three loss terms.
+    Returns:
+        B x K x 1  matrix of losses.
+    """
+    assert len(corners_gt.shape) == 5
+    assert len(corners_pred.shape) == 5
+    assert corners_gt.shape[3] == 2
+    assert corners_gt.shape[4] == 3
+    assert corners_gt.shape[0] == corners_pred.shape[0]
+    assert corners_gt.shape[1] == corners_pred.shape[1]
+    assert corners_gt.shape[2] == corners_pred.shape[2]
+    assert corners_gt.shape[3] == corners_pred.shape[3]
+    assert corners_gt.shape[4] == corners_pred.shape[4]
+
+    B, K, N = corners_gt.shape[0], corners_gt.shape[1], corners_gt.shape[2]
+
+    EPS = 1e-6
+    # corners_gt = torch.mul(loss_mask[..., None, None], corners_gt)
+
+    # Ensure that corners of predicted bboxes satisfy basic constraints
+    corners1_pred = torch.min(corners_pred[:, :, :, 0, :][:,:,None,:], corners_pred[:, :, :, 1, :][:,:,None,:])
+    corners2_pred = torch.max(corners_pred[:, :, :, 0, :][:,:,None,:], corners_pred[:, :, :, 1, :][:,:,None,:])
+
+    # Calculate volume of ground truth and predicted boxes
+    vol_gt = torch.prod(corners_gt[:, :, :, 1, :][:,:,None,:] - corners_gt[:, :, :, 0, :][:,:,None,:], 4)
+    idx = torch.where(vol_gt ==0)
+    # loss_mask[idx[0],idx[1],idx[3]] = 0.0 #torch.tensor(0, dtype=torch.float32)
+    # corners_gt = torch.mul(loss_mask[..., None, None], corners_gt)
+    vol_gt[idx] = EPS # 0.001 #torch.tensor(0.001, dtype=torch.float32)
+    vol_pred = torch.prod(corners2_pred - corners1_pred, 4) # .clamp(min=EPS)
+
+    # Calculate intersection between predicted and ground truth boxes
+    corners1_int = torch.max(corners1_pred, corners_gt[:,:,:,0,:][:,:,None,:])
+    corners2_int = torch.min(corners2_pred, corners_gt[:,:,:,1,:][:,:,None,:])
+    corners_int_diff = (corners2_int - corners1_int).clamp(min=0)
+    vol_int = torch.prod(corners_int_diff, 4) # .clamp(min=EPS)
+    
+    losses = torch.sign(vol_gt-vol_int)
+
+    # Take max across locations and objects, mean across environments
+    losses = losses.amax(dim=1)
+    losses = losses.amax(dim=1)
+    mean_loss = losses.mean()
+
+    return mean_loss
+
 
 def box_loss_true(
     corners_pred: torch.Tensor,

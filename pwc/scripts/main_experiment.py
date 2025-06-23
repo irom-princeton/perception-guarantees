@@ -21,6 +21,8 @@ def main(cfg):
         planner=planner,
     )
 
+    experiment.extract_results()
+
 
 if __name__ == "__main__":
     # command-line arguments

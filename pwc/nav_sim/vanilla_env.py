@@ -200,14 +200,44 @@ class VanillaEnv():
         elif self.observation_type == 'lidar':
             return self._get_lidar()
         elif self.observation_type == 'depth':
-            pc = self._get_point_cloud(rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix, organized=False)
-            return pc.T 
+            pc = self._get_unorganized_point_cloud()
+            return pc
         elif self.observation_type == 'rgbd':
             rgb = self._get_rgb()
-            pc = self._get_point_cloud(rgb_cfg.img_w, rgb_cfg.img_h, view_matrix, projection_matrix, organized=True)
+            pc = self._get_organized_point_cloud()
             return (pc,rgb)
+    
+    def _get_unorganized_point_cloud(self):
 
-    def _get_point_cloud(self, width, height, view_matrix, proj_matrix, organized=False):
+        # Get view matrix
+        init_camera_vector = (1, 0, 0)  # x-axis
+        init_up_vector = (0, 0, 1)  # z-axis
+        camera_vector = self.cam_rot_matrix.dot(init_camera_vector)
+        up_vector = self.cam_rot_matrix.dot(init_up_vector)
+        view_matrix = self._p.computeViewMatrix(
+            self.cam_pos, self.cam_pos + 0.1*camera_vector, up_vector
+        )
+
+        # Get Image
+        far = 5 #1000.0
+        near = 1 #0.01
+        projection_matrix = self._p.computeProjectionMatrixFOV(
+            fov=self.rgb_cfg.fov, aspect=self.rgb_cfg.aspect, nearVal=near,
+            farVal=far
+        )
+        _, _, rgb_img, depth, _ = self._p.getCameraImage(
+            self.rgb_cfg.img_w, self.rgb_cfg.img_h, view_matrix, projection_matrix,
+            flags=self._p.ER_NO_SEGMENTATION_MASK, shadow=1,
+            lightDirection=[1, 1, 1]
+        )
+        depth = np.reshape(depth, (1, self.depth_cfg.img_h, self.depth_cfg.img_w))
+        depth = far * near / (far - (far-near) * depth)
+
+        pc = self._get_point_cloud(depth, self.rgb_cfg.img_w, self.rgb_cfg.img_h, view_matrix, projection_matrix)
+
+        return pc.T #rgb
+    
+    def _get_point_cloud(self, depth, width, height, view_matrix, proj_matrix):
         # based on https://stackoverflow.com/questions/59128880/getting-world-coordinates-from-opengl-depth-buffer
 
         # get a depth image
@@ -216,9 +246,60 @@ class VanillaEnv():
                                       flags=self._p.ER_NO_SEGMENTATION_MASK, shadow=1,
                                       lightDirection=[1, 1, 1])
         depth = np.array(image_arr[3])
-        if organized:
-            depth = median_filter(depth, 4)
 
+        # create a 4x4 transform matrix that goes from pixel coordinates (and depth values) to world coordinates
+        proj_matrix = np.asarray(proj_matrix).reshape([4, 4], order="F")
+        view_matrix = np.asarray(view_matrix).reshape([4, 4], order="F")
+        tran_pix_world = np.linalg.inv(np.matmul(proj_matrix, view_matrix))
+
+        # create a grid with pixel coordinates and depth values
+        # y, x = np.mgrid[-1:1:2 / height, -1:1:2 / width]
+        y, x = np.mgrid[-1:1:2 / height, -1:1:2 / width]
+        y *= -1.
+        x, y, z = x.reshape(-1), y.reshape(-1), depth.reshape(-1)
+        h = np.ones_like(z)
+
+        pixels = np.stack([x, y, z, h], axis=1)
+        # filter out "infinite" depths
+        pixels = pixels[z < 0.99999]
+        pixels[:, 2] = 2 * pixels[:, 2] - 1
+
+        # turn pixels to world coordinates
+        points = np.matmul(tran_pix_world, pixels.T).T
+        points /= points[:, 3: 4]
+        points = points[:, :3]
+
+        return points
+
+    def _get_organized_point_cloud(self):
+        # based on https://stackoverflow.com/questions/59128880/getting-world-coordinates-from-opengl-depth-buffer
+
+        # Get view matrix
+        init_camera_vector = (1, 0, 0)  # x-axis
+        init_up_vector = (0, 0, 1)  # z-axis
+        camera_vector = self.cam_rot_matrix.dot(init_camera_vector)
+        up_vector = self.cam_rot_matrix.dot(init_up_vector)
+        view_matrix = self._p.computeViewMatrix(
+            self.cam_pos, self.cam_pos + 0.1*camera_vector, up_vector
+        )
+
+        # Get Image
+        far = 1000.0  # far plane
+        near = 0.01
+        proj_matrix = self._p.computeProjectionMatrixFOV(
+            fov=self.rgb_cfg.fov, aspect=self.rgb_cfg.aspect, nearVal=near,
+            farVal=far
+        )
+
+        height, width = self.rgb_cfg.img_h, self.rgb_cfg.img_w
+
+        # get a depth image
+        # "infinite" depths will have a value close to 1
+        image_arr = pb.getCameraImage(width=height, height=width, viewMatrix=view_matrix, projectionMatrix=proj_matrix, 
+                                      flags=self._p.ER_NO_SEGMENTATION_MASK, shadow=1,
+                                      lightDirection=[1, 1, 1])
+        depth = np.array(image_arr[3])
+        depth = median_filter(depth, 4)
 
         # create a 4x4 transform matrix that goes from pixel coordinates (and depth values) to world coordinates
         proj_matrix = np.asarray(proj_matrix).reshape([4, 4], order="F")
@@ -233,17 +314,13 @@ class VanillaEnv():
         h = np.ones_like(z)
 
         pixels = np.stack([x, y, z, h], axis=1)
-        # filter out "infinite" depths
-        if not organized:
-            pixels[z > 0.9999] = 0 #np.inf
         pixels[:, 2] = 2 * pixels[:, 2] - 1
 
         # turn pixels to world coordinates
         points = np.matmul(tran_pix_world, pixels.T).T
         points /= points[:, 3: 4]
         points = points[:, :3]
-        if organized:
-            points = points.reshape(height, width, 3)
+        points = points.reshape(height, width, 3)
 
         return points
 

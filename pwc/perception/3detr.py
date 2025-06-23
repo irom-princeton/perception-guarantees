@@ -92,12 +92,6 @@ class Perception3DETR(PerceptionModel):
         box_features = outputs["box_features"].detach().cpu()
         box_features_ = torch.reshape(box_features, (1,1,128,256))
 
-        if exp_config.is_finetune:
-            model_cp = None #TODO: finetune model
-            finetune = model_cp(box_features_)
-
-        
-        
         bbox_pred_points = outputs['outputs']['box_corners'].detach().cpu()
         obj_prob = outputs["outputs"]["objectness_prob"].clone().detach().cpu()
 
@@ -175,14 +169,9 @@ class Perception3DETR(PerceptionModel):
                                     )
                                 )
         
-        if exp_config.is_finetune:
-            finetuned_arr = finetune.cpu().detach().numpy()
-            finetuned_arr = np.squeeze(finetuned_arr)
-            # ipy.embed()
-            corners+=finetuned_arr
 
         # Apply calibration method
-        boxes = calibration_method.calibrate_runtime(corners, box_features)
+        boxes = calibration_method.calibrate_runtime(corners, box_features_)
         
         # if calibration_method.name == "PACBayes-box":
         #     # Calibrate the bounding boxes at runtime
@@ -282,7 +271,7 @@ class Perception3DETR(PerceptionModel):
         num_probs = 0
         corners = np.zeros((self.num_boxes, 2,3))
         if np.any(np.isnan(np.array(bbox_pred_points))):
-            return self.get_room_size_box(pc_all, self.num_boxes)
+            return self.get_room_size_box(pc_all, self.num_chairs)[0]
         
         for (sorted_idx,prob) in zip(list(sort_box[1][0,:]), list(sort_box[0][0,:])):
             if (num_probs < self.num_boxes):

@@ -6,11 +6,12 @@ import torch
 from torch.utils.data import DataLoader, random_split, Subset
 from omegaconf import OmegaConf
 from pathlib import Path
+from joblib import Parallel, delayed
 
 from pwc.calibration.base_calibration import Calibration
 
 from pwc.perception.models.model_inflation import InflationModel
-from pwc.utils.loss_fn import box_loss_diff, box_loss_true
+from pwc.utils.loss_fn import box_loss_diff, box_loss_coverage, box_loss_true
 from pwc.utils.pc_dataset import PointCloudDataset
 from pwc.utils.pac_util import PAC_Bayes_regularizer
 
@@ -61,13 +62,6 @@ class PACBayesScalar(Calibration):
 
         calibration_dataset_base_path = self.training_config.dataset_base_path
 
-        if self.training_config.use_wandb:
-            wandb.init(
-                project="PwC-PAC-0613",
-                name=self.training_config.save_name,
-                config={**self.training_config},
-            )
-
         # --------Initialize dataset and dataloader--------
         dataset = PointCloudDataset(calibration_dataset_base_path+'features.pt',
                                 calibration_dataset_base_path+'bbox_labels.pt',
@@ -83,63 +77,84 @@ class PACBayesScalar(Calibration):
 
         loaders = {
             'prior': DataLoader(prior_data, **params),
-            'post': DataLoader(post_data, **params)
+            'post': DataLoader(post_data, **params),
+            'full': DataLoader(subset, batch_size=self.training_config.N_total, shuffle=False),
         }
 
         #--------Create save directory--------
         save_dir = Path(__file__).parents[1] / "perception" / "models" / "trained_models"
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
-            
+
+        #--------Train prior and posterior models--------
+        print("Starting parallel processing...")
+        training_results = Parallel(n_jobs=self.training_config.num_models, prefer="threads")(
+            delayed(self.train_prior_posterior)(loaders, save_dir, model_id)
+            for model_id in list(range(self.training_config.num_models))
+        )
+
+
+    def train_prior_posterior(self, loaders, save_dir, model_id):
+        logger = None
+        if self.training_config.use_wandb:
+            logger = wandb.init(
+                project="PwC-PAC-0621",
+                name=f'{self.training_config.save_name}_{model_id}',
+                config={**self.training_config},
+            )
+
         #--------Prior Model--------
         prior = InflationModel(self.config.weight_size)
         prior.init_logvar(-4)
         # prior.init_mu(0.5) # initializing mu
-        prior.init_mu(0.05) # initializing mu
+        prior.init_mu(0.05*model_id+0.9) # initializing mu
         prior.to(self.device)
 
         print("Training prior...")
         self.train(model=prior,
-                   dataloader=loaders['prior'],
-                   loss_fn=self.loss_prior,
-                   training_config={
-                       'num_epochs': self.training_config.prior_num_epochs,
-                       'lr': self.training_config.prior_lr,})
-        
-        self.prior = prior
+                dataloader=loaders['prior'],
+                loss_fn=self.loss_prior,
+                training_config={
+                    'num_epochs': self.training_config.prior_num_epochs,
+                    'lr': self.training_config.prior_lr,},
+                logger=logger)
+    
         print(f"Prior inflation: {prior.layer.mu}")
-        torch.save(prior.state_dict(), f"{save_dir}/{self.training_config.save_name}_prior.pth")
-        if self.training_config.verbose:
-            print(f'Saved trained prior model to {save_dir}/{self.training_config.save_name}_prior.pth.')
+        torch.save(prior.state_dict(), f"{save_dir}/{self.training_config.save_name}_prior_{model_id}.pth")
         
-        # --------Posterior model--------
+        if self.training_config.verbose:
+            print(f'Saved trained prior model to {save_dir}/{self.training_config.save_name}_prior_{model_id}.pth.')
 
+            
+        # --------Posterior model--------
+        # train posterior
         posterior = InflationModel(self.config.weight_size)
         posterior.load_state_dict(deepcopy(prior.state_dict()))
         posterior.to(self.device)
         print("Training posterior...")
         self.train(model=posterior,
-                   dataloader=loaders['post'],
-                   loss_fn=self.loss_posterior,
-                   training_config={
-                       'num_epochs': self.training_config.posterior_num_epochs,
-                       'lr': self.training_config.posterior_lr,})
-
+                dataloader=loaders['post'],
+                loss_fn=self.loss_posterior,
+                training_config={
+                    'num_epochs': self.training_config.posterior_num_epochs,
+                    'lr': self.training_config.posterior_lr,},
+                prior=prior,
+                logger=logger)
         print(f"Posterior inflation: {posterior.layer.mu}")
         
         # Save model
-
-        torch.save(posterior.state_dict(), f"{save_dir}/{self.training_config.save_name}_posterior.pth")
+        torch.save(posterior.state_dict(), f"{save_dir}/{self.training_config.save_name}_posterior_{model_id}.pth")
         if self.training_config.verbose:
-            print(f'Saved trained posterior model to {save_dir}/{self.training_config.save_name}_posterior.pth.')
+            print(f'Saved trained posterior model to {save_dir}/{self.training_config.save_name}_posterior_{model_id}.pth.')
         
-
 
     def train(self,
               model: InflationModel,
               dataloader: DataLoader,
               loss_fn: callable,
-              training_config: dict,):
+              training_config: dict,
+              prior: InflationModel = None,
+              logger = None):
         """
         Train a given model with given configs.
         """
@@ -170,7 +185,7 @@ class PACBayesScalar(Calibration):
                 inflation_factor = outputs[..., None, None] * torch.ones_like(boxes_3detr)
                 inflation_factor[:,:,:,0,:] *= -1.0
 
-                loss, loss_true = loss_fn(model, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
+                loss, loss_true = loss_fn(model, inflation_factor, boxes_3detr, boxes_gt, loss_mask, prior) #prior, N, delta, device stored in self
 
                 # backward pass
                 optimizer.zero_grad()
@@ -184,7 +199,7 @@ class PACBayesScalar(Calibration):
             
             #------Optional: log to wandb, print------
             if self.training_config.use_wandb:
-                wandb.log({
+                logger.log({
                     "epoch": epoch,
                     "loss/train": current_loss / num_batches,
                     "loss/true": current_loss_true / num_batches,
@@ -201,7 +216,8 @@ class PACBayesScalar(Calibration):
                    outputs: torch.Tensor,
                    boxes_3detr: torch.Tensor,
                    boxes_gt: torch.Tensor,
-                   loss_mask: torch.Tensor):
+                   loss_mask: torch.Tensor,
+                   prior = None):
         """
         Compute the loss for the prior model.
         """
@@ -215,7 +231,8 @@ class PACBayesScalar(Calibration):
                        outputs: torch.Tensor,
                        boxes_3detr: torch.Tensor,
                        boxes_gt: torch.Tensor,
-                       loss_mask: torch.Tensor):
+                       loss_mask: torch.Tensor,
+                       prior: InflationModel = None):
         """
         Compute the loss for the posterior model.
         """
@@ -228,7 +245,7 @@ class PACBayesScalar(Calibration):
         # hj = torch.autograd.grad(loss, model.parameters(), retain_graph=True)
         # hj = torch.autograd.grad(reg, model.parameters(), retain_graph=True)
         
-        reg = PAC_Bayes_regularizer(model, self.prior, self.training_config.N, self.training_config.delta, self.device)
+        reg = PAC_Bayes_regularizer(model, prior, self.training_config.N, self.training_config.delta, self.device)
         # loss += torch.sqrt(reg / 2)
         # breakpoint()
         loss += torch.sqrt(reg / self.training_config.N)
@@ -257,29 +274,37 @@ class PACBayesScalar(Calibration):
 
         # --------Load prior and posterior models--------
         save_dir = Path(__file__).parents[1] / "perception" / "models" / "trained_models"
+
+        def evaluate_id(model_id: int):
         
-        print(f"Loading prior...")
-        prior = InflationModel(self.config.weight_size)
-        prior.load_state_dict(torch.load(f"{save_dir}/{self.training_config.save_name}_prior.pth", map_location=self.device))
-        prior.to(self.device)
-        prior.eval()
+            print(f"Loading prior...")
+            prior = InflationModel(self.config.weight_size)
+            prior.load_state_dict(torch.load(f"{save_dir}/{self.training_config.save_name}_prior_{model_id}.pth", map_location=self.device))
+            prior.to(self.device)
+            prior.eval()
 
-        print(f"Loading posterior...")
-        posterior = InflationModel(self.config.weight_size)
-        posterior.load_state_dict(torch.load(f"{save_dir}/{self.training_config.save_name}_posterior.pth", map_location=self.device))
-        posterior.to(self.device)
-        posterior.eval()
+            print(f"Loading posterior...")
+            posterior = InflationModel(self.config.weight_size)
+            posterior.load_state_dict(torch.load(f"{save_dir}/{self.training_config.save_name}_posterior_{model_id}.pth", map_location=self.device))
+            posterior.to(self.device)
+            posterior.eval()
 
-        #--------Evaluate the bound--------
-        bound = self.compute_bound(
-            dataloader=loader,
-            posterior=posterior,
-            prior=prior,
-            # loss_fn=self.loss_coverage,
-            loss_fn=self.loss_prior,
+            #--------Evaluate the bound--------
+            bound = self.compute_bound(
+                dataloader=loader,
+                posterior=posterior,
+                prior=prior,
+                loss_fn=self.loss_coverage,
+                # loss_fn=self.loss_prior,
+            )
+            print(f"Model {model_id}: mu {posterior.layer.mu.item():.4f} | logvar {posterior.layer.logvar.item():.4f} | PAC-Bayes bound {bound.item():.4f}")
+
+        print("Starting parallel evaluation...")
+        # eval_results = Parallel(n_jobs=self.training_config.num_models, prefer="threads")(
+        eval_results = Parallel(n_jobs=1, prefer="threads")(
+            delayed(evaluate_id)(model_id)
+            for model_id in list(range(self.training_config.num_models))
         )
-        print(f"PAC-Bayes bound: {bound.item():.4f}")
-
 
     def compute_bound(self,
                       dataloader: DataLoader,
@@ -308,7 +333,7 @@ class PACBayesScalar(Calibration):
             # not_enclosed = loss_fn(prior, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
             # take max over states and objects
             # not_enclosed = not_enclosed.amax(dim=1).amax(dim=1)  # B
-            train_loss, _ = loss_fn(posterior, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
+            train_loss = loss_fn(posterior, inflation_factor, boxes_3detr, boxes_gt, loss_mask) #prior, N, delta, device stored in self
 
         # train_loss = not_enclosed.sum().item() / len(not_enclosed)  # average over batch
             
@@ -324,12 +349,12 @@ class PACBayesScalar(Calibration):
                       outputs: torch.Tensor,
                       boxes_3detr: torch.Tensor,
                       boxes_gt: torch.Tensor,
-                      loss_mask: torch.Tensor):
+                      loss_mask: torch.Tensor,):
         """
         Compute the coverage loss.
         """
-        mean_loss, not_enclosed = box_loss_true(outputs + boxes_3detr, boxes_gt, loss_mask, 0.01)
-        return not_enclosed
+        loss = box_loss_coverage(outputs + boxes_3detr, boxes_gt, self.w1, self.w2, self.w3, loss_mask)
+        return loss
     
     def calibrate_runtime(self,
                           corners: torch.Tensor,
@@ -348,12 +373,12 @@ class PACBayesScalar(Calibration):
         inflated_corners = inflation_factor + boxes_3detr
         inflated_corners = inflated_corners.cpu().detach().numpy().squeeze()
 
-        boxes = np.zeros((len(corners),2,2))
-        for i in range(len(corners)):
+        boxes = np.zeros((len(inflated_corners),2,2))
+        for i in range(len(inflated_corners)):
             # boxes[i,:,:] = corners[i][0,:,0:2]
-            boxes[i,:,0] = corners[i,:,1]
-            boxes[i,0,1] = -corners[i,1,0]
-            boxes[i,1,1] = -corners[i,0,0]
+            boxes[i,:,0] = inflated_corners[i,:,1]
+            boxes[i,0,1] = -inflated_corners[i,1,0]
+            boxes[i,1,1] = -inflated_corners[i,0,0]
     
         return boxes
     
